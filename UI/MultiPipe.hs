@@ -23,9 +23,6 @@ import UI.HSCurses.CursesHelper as CH
 
 runMultiPipe :: [InputStream ByteString] -> IO ()
 runMultiPipe ls = do
-
-  m <- concurrentMerge ls
-
   CH.start
   w <- initScr
   
@@ -99,10 +96,12 @@ test = do
   s1 <- S.fromList ["hi","there","you","blah"]
   s2 <- S.fromList ["aaa","bbb","ccc"]
 
-  -- x <- S.read s1
-  -- y <- S.read s1  
-  -- P.putStrLn$"READ FIRST INPUTs: "++show (x,y)
-  -- P.getLine
+  Just x <- S.read s1
+  Just y <- S.read s1
+  P.putStrLn$"READ FIRST INPUTs: "++show (x,y)
+  S.unRead y s1
+  S.unRead x s1
+  P.getLine
   
   runMultiPipe [s1,s2]
 
