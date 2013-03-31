@@ -124,7 +124,6 @@ applyTiling (screenY,screenX) (splitsY,splitsX) =
   | (yStrt,height) <- doDim screenY splitsY
   , (xStrt,width)  <- doDim screenX splitsX ]
   where
-    
     -- This is used both for horizontal and vertical, but I use horizontal
     -- terminology below:
     doDim :: Word -> Word -> [(Word,Word)]
@@ -135,7 +134,7 @@ applyTiling (screenY,screenX) (splitsY,splitsX) =
       -- Every window must "pay" for its left border, the rightmost border is paid for
       -- globally, hence the minus-one here:        
       usable = screen - 1
-      (each,left) = usable `quotRem` splitsX
+      (each,left) = usable `quotRem` splits
       -- Here we distribute the remainder as evenly as possible:
       widths = let (hd,tl) = L.splitAt (fromIntegral left)
                              (L.replicate (w2i splits) each) in
@@ -259,9 +258,24 @@ boundingBox wps = (maxY,maxX, minY,minX)
     maxX = F.foldl1 max (NE.zipWith (+) ws xs)
     (hs,ws,ys,xs) = Main.unzip4 wps
 
-
 t0 :: [WinPos]
 t0 = applyTiling (48,173) (3,2)
+
+t1 = boundingBox (NE.fromList t0)
+
+case_t0 :: Bool    
+case_t0 = prop_goodtiling (48,173) (3,2)
+
+prop_goodtiling :: (Word,Word) -> (Word,Word) -> Bool
+prop_goodtiling (y,x) (splitY,splitX) =
+  if (y>0 && x>0 && splitY>0 && splitX > 0) 
+  then (h == y && w == x)
+  else True -- Trivially.
+ where
+   tiles     = applyTiling (y,x) (splitY,splitX)
+   (h,w,0,0) = boundingBox (NE.fromList tiles) 
+  
+--  computeTiling (y,x)
 
 -- testSuite = $(testGroupGenerator)
 
