@@ -52,20 +52,26 @@ type MP a = StateT (IORef MPState) IO a
 -- streamHistories.
 createWindows :: [StreamHistory] -> IO ()
 createWindows shists = do
+--  CH.start
+  
   w0 <- initScr
-  (curY,curX) <- getYX w0
+  (curY,curX) <- scrSize 
   let num = P.length shists
       (nX,nY) = computeTiling num
-      panelDims = applyTiling (curY,curX) (nX,nY)
-  
-  forM_ panelDims $ \ tup@(wid,hght, posY, posX) -> do
+      panelDims = applyTiling (curY,curX) (nY,nX)
 
-    -- move 1 1
+--  P.putStrLn$"Using Tiling: "++show panelDims; P.getLine
+
+  
+  forM_ panelDims $ \ tup@(hght,wid, posY, posX) -> do
+
+    wMove w0 1 1
+    wAddStr w0 ("Creating: "++show tup)
     -- puts ("Creating: "++show tup)
     
     w1 <- C.newWin wid hght posY posX
     wBorder w1 defaultBorder
---    wMove w1 1 1
+--    wMove w1 0 0
 --    wAddStr w1 "hello"    
     wRefresh w1    
     return ()
@@ -84,14 +90,14 @@ computeTiling reqWins =
     n = sqrt (fromIntegral reqWins)
     n' = ceiling n 
 
--- | Position of a window: (Width,Height, PosY, PosX)
+-- | Position of a window: (Height,Width, PosY, PosX)
 --   The same order as accepted by `newWin`.
 type WinPos = (Int,Int,Int,Int)
 
 -- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
 applyTiling :: (Int, Int) -> (Int, Int) -> [WinPos]
 applyTiling (screenY,screenX) (splitsY,splitsX) =
-  [ (width,height, yStrt, xStrt)
+  [ (height,width, yStrt, xStrt)
   | (yStrt,height) <- doDim screenY splitsY
   , (xStrt,width)  <- doDim screenX splitsX ]
   where
@@ -211,9 +217,9 @@ test = do
   runMultiPipe [s1,s2]
 
 main = do
-  start
+--  CH.start
   createWindows (L.replicate 6 undefined) 
   _ <- CH.getKey C.refresh      
-  end
+  CH.end
 
 puts s = drawLine (P.length s) s
