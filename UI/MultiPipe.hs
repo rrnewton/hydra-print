@@ -71,20 +71,21 @@ type WinPos = (Word,Word,Word,Word)
 -- stream histories.
 createWindows :: [StreamHistory] -> IO ()
 createWindows shists = do
-
---  CH.start
+  CH.start
+  _ <- leaveOk True
+  _ <- cursSet CursorInvisible
   w0 <- initScr
   (curY,curX) <- scrSize 
   let num = i2w$ P.length shists
       (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
 
-  P.putStrLn$"Screen size: "++show (curY,curX); _ <- P.getLine
+--  P.putStrLn$"Screen size: "++show (curY,curX); _ <- P.getLine
 --  P.putStrLn$"Using Tiling: "++show panelDims; P.getLine
 -- Using Tiling: [(25,87,0,0),(25,87,0,86),(24,87,24,0),(24,87,24,86),(24,87,47,0),(24,87,47,86)]
-  CH.start
+--  CH.start
   
-  forM_ panelDims $ \ tup@(hght,wid, posY, posX) -> do
+  forM_ (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
 
     wMove w0 1 1
     wAddStr w0 ("Creating: "++show tup)
@@ -115,11 +116,11 @@ computeTiling reqWins =
     n' = ceiling n 
 
 -- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
-applyTiling :: (Word, Word) -> (Word, Word) -> [WinPos]
+applyTiling :: (Word, Word) -> (Word, Word) -> NonEmpty WinPos
 applyTiling _ a2@(splitsY,splitsX)
   | splitsX < 1 || splitsY < 1 =
     error$"applyTiling: cannot split ZERO ways in either dimension: "++show(a2)
-applyTiling (screenY,screenX) (splitsY,splitsX) =
+applyTiling (screenY,screenX) (splitsY,splitsX) = NE.fromList$ 
   [ (height,width, yStrt, xStrt)
   | (yStrt,height) <- doDim screenY splitsY
   , (xStrt,width)  <- doDim screenX splitsX ]
@@ -240,14 +241,6 @@ puts s = drawLine (P.length s) s
 -- Tests
 --------------------------------------------------------------------------------
 
--- boundingBox :: [WinPos] -> WinPos
--- boundingBox [] = error ""
--- boundingBox wps =
---   undefined
---   where
---     minY = foldl1 (min) 
---     (hs,ws,ys,xs) = unzip4 wps
-
 -- Returns (inclusive,exclusive) bounds.
 boundingBox :: NE.NonEmpty WinPos -> WinPos
 boundingBox wps = (maxY,maxX, minY,minX)
@@ -258,10 +251,11 @@ boundingBox wps = (maxY,maxX, minY,minX)
     maxX = F.foldl1 max (NE.zipWith (+) ws xs)
     (hs,ws,ys,xs) = Main.unzip4 wps
 
-t0 :: [WinPos]
+t0 :: NonEmpty WinPos
 t0 = applyTiling (48,173) (3,2)
 
-t1 = boundingBox (NE.fromList t0)
+t1 :: WinPos
+t1 = boundingBox t0
 
 case_t0 :: Bool    
 case_t0 = prop_goodtiling (48,173) (3,2)
@@ -273,7 +267,7 @@ prop_goodtiling (y,x) (splitY,splitX) =
   else True -- Trivially.
  where
    tiles     = applyTiling (y,x) (splitY,splitX)
-   (h,w,0,0) = boundingBox (NE.fromList tiles) 
+   (h,w,0,0) = boundingBox tiles 
   
 --  computeTiling (y,x)
 
