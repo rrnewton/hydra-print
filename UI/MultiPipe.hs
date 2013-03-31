@@ -19,8 +19,10 @@ import Control.Monad
 import Control.Concurrent
 import System.IO.Streams as S
 import System.IO.Streams.Concurrent (concurrentMerge)
-import UI.HSCurses.Curses as C
 import UI.HSCurses.CursesHelper as CH
+-- import qualified UI.HSCurses.Curses as C
+-- import UI.HSCurses.Curses (wMove, defaultBorder)
+import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 
 import Control.Monad.State
 import Control.Monad.Reader
@@ -61,7 +63,7 @@ type MP a = StateT (IORef MPState) IO a
 
 -- | Position of a window: (Height,Width, PosY, PosX)
 --   The same order as accepted by `newWin`.
-type WinPos = (Int,Int,Int,Int)
+type WinPos = (Word,Word,Word,Word)
 
 --------------------------------------------------------------------------------
 
@@ -71,14 +73,13 @@ createWindows :: [StreamHistory] -> IO ()
 createWindows shists = do
 
 --  CH.start
-  
   w0 <- initScr
   (curY,curX) <- scrSize 
-  let num = P.length shists
-      (nX,nY) = computeTiling num
-      panelDims = applyTiling (curY,curX) (nY,nX)
+  let num = i2w$ P.length shists
+      (nX,nY)   = computeTiling num
+      panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
 
-  P.putStrLn$"Screen size: "++show (curY,curX); P.getLine
+  P.putStrLn$"Screen size: "++show (curY,curX); _ <- P.getLine
 --  P.putStrLn$"Using Tiling: "++show panelDims; P.getLine
 -- Using Tiling: [(25,87,0,0),(25,87,0,86),(24,87,24,0),(24,87,24,86),(24,87,47,0),(24,87,47,86)]
   CH.start
@@ -89,7 +90,7 @@ createWindows shists = do
     wAddStr w0 ("Creating: "++show tup)
     -- puts ("Creating: "++show tup)
     
-    w1 <- C.newWin hght wid posY posX
+    w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     wBorder w1 defaultBorder
 --    wMove w1 0 0
 --    wAddStr w1 "hello"    
@@ -103,7 +104,7 @@ createWindows shists = do
 -- | If at least `n` windows are required, this computes the x-by-y tiling such that
 --   `x * y >= n`.  It returns `(x,y)` where `x` represents the number of horizontal
 --   tiles and `y` the number of vertical.
-computeTiling :: Int -> (Int,Int)
+computeTiling :: Word -> (Word,Word)
 computeTiling reqWins =
   if   (n' - 1) * n' >= reqWins
   then (n' - 1, n')
@@ -113,9 +114,11 @@ computeTiling reqWins =
     n = sqrt (fromIntegral reqWins)
     n' = ceiling n 
 
-
 -- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
-applyTiling :: (Int, Int) -> (Int, Int) -> [WinPos]
+applyTiling :: (Word, Word) -> (Word, Word) -> [WinPos]
+applyTiling _ a2@(splitsY,splitsX)
+  | splitsX < 1 || splitsY < 1 =
+    error$"applyTiling: cannot split ZERO ways in either dimension: "++show(a2)
 applyTiling (screenY,screenX) (splitsY,splitsX) =
   [ (height,width, yStrt, xStrt)
   | (yStrt,height) <- doDim screenY splitsY
@@ -124,6 +127,7 @@ applyTiling (screenY,screenX) (splitsY,splitsX) =
     
     -- This is used both for horizontal and vertical, but I use horizontal
     -- terminology below:
+    doDim :: Word -> Word -> [(Word,Word)]
     doDim screen splits = P.zip starts widths' 
       -- Every window must "pay" for its left border, the rightmost border is paid for
       -- globally, hence the minus-one here:                          
@@ -133,7 +137,8 @@ applyTiling (screenY,screenX) (splitsY,splitsX) =
       usable = screen - 1
       (each,left) = usable `quotRem` splitsX
       -- Here we distribute the remainder as evenly as possible:
-      widths = let (hd,tl) = L.splitAt left (L.replicate splits each) in
+      widths = let (hd,tl) = L.splitAt (fromIntegral left)
+                             (L.replicate (w2i splits) each) in
                (L.map (+1) hd) ++ tl
       -- Starting positions are based on the raw widths not counting overlap
       starts = L.init$ L.scanl (+) 0 widths
@@ -152,7 +157,6 @@ applyTiling (screenY,screenX) (splitsY,splitsX) =
 runMultiPipe :: [InputStream ByteString] -> IO ()
 runMultiPipe ls = do
   CH.start
-  w <- initScr
   
   w1 <- C.newWin 10 40 10 10  
   w2 <- C.newWin 10 35 10 49
@@ -179,31 +183,18 @@ runMultiPipe ls = do
   wRefresh w1
 
   let
-      f i x = do
+      f i ob = do
         wMove w2 (1 + i`mod`8) 2
-        wAddStr  w2 $"stream "++show x
+        wAddStr  w2 $"stream "++show ob
         wRefresh w2
     
-      f _ (Left str) = do
-                        wMove w1 1 1
-                        wAddStr w1 (P.take 38 (B.unpack str))
-                        wRefresh w1
-                        return ()
-      f _ (Right str) = do 
-                        wMove w2 1 1
-                        wAddStr w2 (P.take 33 (B.unpack str))
-                        wRefresh w2
-                        return ()                        
-  -- Attach a side effect:
---  S.mapM_ f s3 
-  
   let ref = do wRefresh w1; wRefresh w2
   forM_ [1..8] $ \i -> do 
     wMove w1 (2+(i `mod` 6)) (3+i)
     wAddStr w1 $"ERGH "++show i
     wRefresh w1    
-    x <- S.read s3
-    case x of
+    o <- S.read s3
+    case o of
       (Just y) -> f i y
       Nothing -> do
         -- move 2 2
@@ -219,6 +210,7 @@ runMultiPipe ls = do
   CH.end
 
 
+test :: IO ()
 test = do
   -- Weird, what will happen:
 --  inlines <- S.lines S.stdin
@@ -230,16 +222,18 @@ test = do
   P.putStrLn$"READ FIRST INPUTs: "++show (x,y)
   S.unRead y s1
   S.unRead x s1
-  P.getLine
+  _ <- P.getLine
   
   runMultiPipe [s1,s2]
 
+main :: IO ()
 main = do
 --  CH.start
   createWindows (L.replicate 6 undefined) 
   _ <- CH.getKey C.refresh      
   CH.end
 
+puts :: String -> IO ()
 puts s = drawLine (P.length s) s
 
 
@@ -286,3 +280,16 @@ instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
   arbitrary = (:|) <$> arbitrary <*> arbitrary
   shrink x = NE.fromList <$> shrink (NE.toList x)
 
+
+
+-- | Annoyingly, many libraries use Int where negative values are not allowed.
+i2w :: Int -> Word
+i2w i | i < 0 = error$"i2w: Cannot convert negative Int to Word: "++show i
+i2w i = fromIntegral i
+
+w2i :: Word -> Int
+w2i w = if i < 0
+        then error$"w2i: Cannot convert Word to Int: "++show w
+        else i
+  where 
+  i = fromIntegral w
