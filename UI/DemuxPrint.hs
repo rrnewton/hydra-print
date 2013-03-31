@@ -4,7 +4,7 @@
 module UI.DemuxPrint
        (
          -- * Main Entrypoints
-         createWindows
+         createWindows, initialize
          
          -- * Types
          
@@ -76,9 +76,6 @@ type WinPos = (Word,Word,Word,Word)
 -- stream histories.
 createWindows :: [StreamHistory] -> IO [Window]
 createWindows shists = do
-  CH.start
-  _ <- leaveOk True
-  _ <- cursSet CursorInvisible
   w0 <- initScr
   (curY,curX) <- scrSize 
   let num = i2w$ P.length shists
@@ -93,55 +90,13 @@ createWindows shists = do
     wRefresh w1
     return w1
 
---------------------------------------------------------------------------------
--- Tiling behavior
---------------------------------------------------------------------------------    
+initialize = do
+  _ <- leaveOk True
+  _ <- cursSet CursorInvisible
+  return ()
 
--- | If at least `n` windows are required, this computes the x-by-y tiling such that
---   `x * y >= n`.  It returns `(x,y)` where `x` represents the number of horizontal
---   tiles and `y` the number of vertical.
-computeTiling :: Word -> (Word,Word)
-computeTiling reqWins =
-  if   (n' - 1) * n' >= reqWins
-  then (n' - 1, n')
-  else (n', n')     
-  where
-    n :: Double
-    n = sqrt (fromIntegral reqWins)
-    n' = ceiling n 
-
--- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
-applyTiling :: (Word, Word) -> (Word, Word) -> NonEmpty WinPos
-applyTiling _ a2@(splitsY,splitsX)
-  | splitsX < 1 || splitsY < 1 =
-    error$"applyTiling: cannot split ZERO ways in either dimension: "++show(a2)
-applyTiling (screenY,screenX) (splitsY,splitsX) = NE.fromList$ 
-  [ (height,width, yStrt, xStrt)
-  | (yStrt,height) <- doDim screenY splitsY
-  , (xStrt,width)  <- doDim screenX splitsX ]
-  where
-    -- This is used both for horizontal and vertical, but I use horizontal
-    -- terminology below:
-    doDim :: Word -> Word -> [(Word,Word)]
-    doDim screen splits = P.zip starts widths' 
-      -- Every window must "pay" for its left border, the rightmost border is paid for
-      -- globally, hence the minus-one here:                          
-      where
-      -- Every window must "pay" for its left border, the rightmost border is paid for
-      -- globally, hence the minus-one here:        
-      usable = screen - 1
-      (each,left) = usable `quotRem` splits
-      -- Here we distribute the remainder as evenly as possible:
-      widths = let (hd,tl) = L.splitAt (fromIntegral left)
-                             (L.replicate (w2i splits) each) in
-               (L.map (+1) hd) ++ tl
-      -- Starting positions are based on the raw widths not counting overlap
-      starts = L.init$ L.scanl (+) 0 widths
-      -- Final widths get bumped to include their rightmost border:
-      widths' = L.map (+1) widths
     
 --------------------------------------------------------------------------------
-
 
 -- | Takes a /source/ of input streams, which may be added dynamically.  A stream
 -- that joins dynamically, exits once it issues an end-of-stream.
@@ -205,6 +160,55 @@ runMultiPipe ls = do
   CH.end
 
 
+--------------------------------------------------------------------------------
+-- Tiling behavior
+--------------------------------------------------------------------------------    
+
+-- | If at least `n` windows are required, this computes the x-by-y tiling such that
+--   `x * y >= n`.  It returns `(x,y)` where `x` represents the number of horizontal
+--   tiles and `y` the number of vertical.
+computeTiling :: Word -> (Word,Word)
+computeTiling reqWins =
+  if   (n' - 1) * n' >= reqWins
+  then (n' - 1, n')
+  else (n', n')     
+  where
+    n :: Double
+    n = sqrt (fromIntegral reqWins)
+    n' = ceiling n 
+
+-- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
+applyTiling :: (Word, Word) -> (Word, Word) -> NonEmpty WinPos
+applyTiling _ a2@(splitsY,splitsX)
+  | splitsX < 1 || splitsY < 1 =
+    error$"applyTiling: cannot split ZERO ways in either dimension: "++show(a2)
+applyTiling (screenY,screenX) (splitsY,splitsX) = NE.fromList$ 
+  [ (height,width, yStrt, xStrt)
+  | (yStrt,height) <- doDim screenY splitsY
+  , (xStrt,width)  <- doDim screenX splitsX ]
+  where
+    -- This is used both for horizontal and vertical, but I use horizontal
+    -- terminology below:
+    doDim :: Word -> Word -> [(Word,Word)]
+    doDim screen splits = P.zip starts widths' 
+      -- Every window must "pay" for its left border, the rightmost border is paid for
+      -- globally, hence the minus-one here:                          
+      where
+      -- Every window must "pay" for its left border, the rightmost border is paid for
+      -- globally, hence the minus-one here:        
+      usable = screen - 1
+      (each,left) = usable `quotRem` splits
+      -- Here we distribute the remainder as evenly as possible:
+      widths = let (hd,tl) = L.splitAt (fromIntegral left)
+                             (L.replicate (w2i splits) each) in
+               (L.map (+1) hd) ++ tl
+      -- Starting positions are based on the raw widths not counting overlap
+      starts = L.init$ L.scanl (+) 0 widths
+      -- Final widths get bumped to include their rightmost border:
+      widths' = L.map (+1) widths
+
+--------------------------------------------------------------------------------    
+
 test :: IO ()
 test = do
   -- Weird, what will happen:
@@ -221,12 +225,6 @@ test = do
   
   runMultiPipe [s1,s2]
 
-main :: IO ()
-main = do
---  CH.start
-  createWindows (L.replicate 6 undefined) 
-  _ <- CH.getKey C.refresh      
-  CH.end
 
 puts :: String -> IO ()
 puts s = drawLine (P.length s) s
