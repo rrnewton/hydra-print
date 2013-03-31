@@ -69,7 +69,7 @@ type WinPos = (Word,Word,Word,Word)
 
 -- | Create a new batch of windows and display the current state of a set of
 -- stream histories.
-createWindows :: [StreamHistory] -> IO ()
+createWindows :: [StreamHistory] -> IO [Window]
 createWindows shists = do
   CH.start
   _ <- leaveOk True
@@ -79,24 +79,14 @@ createWindows shists = do
   let num = i2w$ P.length shists
       (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
-
---  P.putStrLn$"Screen size: "++show (curY,curX); _ <- P.getLine
---  P.putStrLn$"Using Tiling: "++show panelDims; P.getLine
--- Using Tiling: [(25,87,0,0),(25,87,0,86),(24,87,24,0),(24,87,24,86),(24,87,47,0),(24,87,47,86)]
---  CH.start
   
-  forM_ (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
-
-    wMove w0 1 1
-    wAddStr w0 ("Creating: "++show tup)
-    -- puts ("Creating: "++show tup)
-    
+  forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     wBorder w1 defaultBorder
---    wMove w1 0 0
---    wAddStr w1 "hello"    
-    wRefresh w1    
-    return ()
+    wMove w1 1 1
+    wAddStr w1 ("Created: "++show tup)    
+    wRefresh w1
+    return w1
 
 --------------------------------------------------------------------------------
 -- Tiling behavior
