@@ -29,7 +29,8 @@ main = do
   
   let loop i = do 
    --    _ <- CH.getKey redraw
-       dispAll 2$ "Iter "++show i++"        "
+       sz <- scrSize
+       dispAll 2$ "Iter "++show i++" "++" size "++show sz
        refreshAll
        k <- C.getCh
        case k of
@@ -37,11 +38,14 @@ main = do
            CH.end
            putStrLn "NCurses finished."
          KeyResize -> do           
+           C.endWin
+           C.update
            reCreate
-           dispAll 2$ "RESIZING! "           
+           dispAll 3$ "RESIZING! "
            loop (i+1)
          c -> do
-           dispAll 2$ "KeyPress "++show c
+           dispAll 3$ "KeyPress "++show c
            refreshAll
            loop (i+1)
   loop 0
+

@@ -54,11 +54,11 @@ data MPState =
 -- stream histories persist.
 data StreamHistory =
   StreamHistory {
-    -- ^ The name of a stream might identify a client hostname, or a subprogram run,
+    -- | The name of a stream might identify a client hostname, or a subprogram run,
     -- or a file being compiled.  These are displayed so as to help distinguish
     -- different windows from one another, especially as the layout changes.  
     streamName :: String, 
-    -- ^ A (reverse) list of lines with the most recently produced at the head.
+    -- | A (reverse) list of lines with the most recently produced at the head.
     revhist :: IORef [ByteString]
   }
 

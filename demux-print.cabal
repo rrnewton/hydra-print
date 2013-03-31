@@ -19,6 +19,10 @@ library
                        -- UI.NCurses, UI.NCurses.Enums, UI.NCurses.Panel, UI.NCurses.Types, 
   -- other-modules:       
   build-depends:       base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
-                       ncurses ==0.2.*, bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
-                       mtl ==2.1.*, semigroups ==0.9.*, QuickCheck ==2.5.*
+                       bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
+                       mtl ==2.1.*, semigroups ==0.9.*, 
+  -- Testing: 
+                       QuickCheck ==2.5.*
+
+-- ncurses ==0.2.*, 
 --  build-tools:         chs
