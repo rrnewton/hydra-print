@@ -28,19 +28,18 @@ Library
   --   location: https://github.com/rrnewton/demux-print
 
 
--- Test-Suite test-demux-print
---     type:       exitcode-stdio-1.0
---     main-is:    TestFramework.hs
---     -- DUPLICATED from above
---     build-depends:     base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
---                        bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
---                        mtl ==2.1.*, semigroups ==0.9.*, 
+Test-Suite test-demux-print
+    type:       exitcode-stdio-1.0
+    main-is:    TestFramework.hs
+    -- DUPLICATED from above
+    build-depends: base, transformers, containers, text, bytestring, io-streams,
+                   semigroups, mtl, hscurses,
 
---     -- Additional dependencies:
---     ---------------------------
---                        QuickCheck                 ==2.5.*,
---                        HUnit                      ==1.2.*,
---                        test-framework             ==0.8.*,
---                        test-framework-hunit       ==0.3.*,
---                        test-framework-quickcheck2 ==0.3.*,
---                        test-framework-th          ==0.2.*
+    -- Additional dependencies:
+    ---------------------------
+                   QuickCheck                 ==2.5.*,
+                   HUnit                      ==1.2.*,
+                   test-framework             ==0.8.*,
+                   test-framework-hunit       ==0.3.*,
+                   test-framework-quickcheck2 ==0.3.*,
+                   test-framework-th          ==0.2.*
