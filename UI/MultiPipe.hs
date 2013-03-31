@@ -5,10 +5,16 @@
 -- module UI.MultiPipe where
 module Main where
 
+-- * Types
+
+-- * Tiling behavior
+-- computeTiling, applyTiling
+
 import Data.IORef
+import Data.Word
 import Data.List as L 
 import Data.ByteString.Char8 as B
-import Prelude as P
+import Prelude as P hiding (unzip4) 
 import Control.Monad
 import Control.Concurrent
 import System.IO.Streams as S
@@ -18,6 +24,13 @@ import UI.HSCurses.CursesHelper as CH
 
 import Control.Monad.State
 import Control.Monad.Reader
+
+import Control.Applicative
+import qualified Data.Foldable as F
+import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty (NonEmpty((:|)))
+
+import Test.QuickCheck hiding (NonEmpty)
 
 --------------------------------------------------------------------------------
 -- Types
@@ -46,12 +59,17 @@ data StreamHistory =
 -- mutable state.
 type MP a = StateT (IORef MPState) IO a
 
+-- | Position of a window: (Height,Width, PosY, PosX)
+--   The same order as accepted by `newWin`.
+type WinPos = (Int,Int,Int,Int)
+
 --------------------------------------------------------------------------------
 
--- | Create a new batch of windows and display the current state of aset of
--- streamHistories.
+-- | Create a new batch of windows and display the current state of a set of
+-- stream histories.
 createWindows :: [StreamHistory] -> IO ()
 createWindows shists = do
+
 --  CH.start
   
   w0 <- initScr
@@ -60,8 +78,10 @@ createWindows shists = do
       (nX,nY) = computeTiling num
       panelDims = applyTiling (curY,curX) (nY,nX)
 
+  P.putStrLn$"Screen size: "++show (curY,curX); P.getLine
 --  P.putStrLn$"Using Tiling: "++show panelDims; P.getLine
-
+-- Using Tiling: [(25,87,0,0),(25,87,0,86),(24,87,24,0),(24,87,24,86),(24,87,47,0),(24,87,47,86)]
+  CH.start
   
   forM_ panelDims $ \ tup@(hght,wid, posY, posX) -> do
 
@@ -69,20 +89,23 @@ createWindows shists = do
     wAddStr w0 ("Creating: "++show tup)
     -- puts ("Creating: "++show tup)
     
-    w1 <- C.newWin wid hght posY posX
+    w1 <- C.newWin hght wid posY posX
     wBorder w1 defaultBorder
 --    wMove w1 0 0
 --    wAddStr w1 "hello"    
     wRefresh w1    
     return ()
 
+--------------------------------------------------------------------------------
+-- Tiling behavior
+--------------------------------------------------------------------------------    
 
 -- | If at least `n` windows are required, this computes the x-by-y tiling such that
 --   `x * y >= n`.  It returns `(x,y)` where `x` represents the number of horizontal
 --   tiles and `y` the number of vertical.
 computeTiling :: Int -> (Int,Int)
 computeTiling reqWins =
-  if (n' - 1) * n' >= reqWins
+  if   (n' - 1) * n' >= reqWins
   then (n' - 1, n')
   else (n', n')     
   where
@@ -90,9 +113,6 @@ computeTiling reqWins =
     n = sqrt (fromIntegral reqWins)
     n' = ceiling n 
 
--- | Position of a window: (Height,Width, PosY, PosX)
---   The same order as accepted by `newWin`.
-type WinPos = (Int,Int,Int,Int)
 
 -- | Split a space into a given X-by-Y tile arrangement, leaving room for borders.
 applyTiling :: (Int, Int) -> (Int, Int) -> [WinPos]
@@ -199,8 +219,6 @@ runMultiPipe ls = do
   CH.end
 
 
-
-
 test = do
   -- Weird, what will happen:
 --  inlines <- S.lines S.stdin
@@ -223,3 +241,48 @@ main = do
   CH.end
 
 puts s = drawLine (P.length s) s
+
+
+--------------------------------------------------------------------------------
+-- Tests
+--------------------------------------------------------------------------------
+
+-- boundingBox :: [WinPos] -> WinPos
+-- boundingBox [] = error ""
+-- boundingBox wps =
+--   undefined
+--   where
+--     minY = foldl1 (min) 
+--     (hs,ws,ys,xs) = unzip4 wps
+
+-- Returns (inclusive,exclusive) bounds.
+boundingBox :: NE.NonEmpty WinPos -> WinPos
+boundingBox wps = (maxY,maxX, minY,minX)
+  where
+    minY = F.foldl1 min ys
+    minX = F.foldl1 min xs
+    maxY = F.foldl1 max (NE.zipWith (+) hs ys)
+    maxX = F.foldl1 max (NE.zipWith (+) ws xs)
+    (hs,ws,ys,xs) = Main.unzip4 wps
+
+
+t0 :: [WinPos]
+t0 = applyTiling (48,173) (3,2)
+
+-- testSuite = $(testGroupGenerator)
+
+----------------------------------------
+-- Missing bits from Data.List.NonEmpty:
+----------------------------------------
+
+-- | 'unzip4' for `NonEmpty` lists
+unzip4 :: Functor f => f (a,b,c,d) -> (f a, f b, f c, f d)
+unzip4 xs = ((\(x,_,_,_) -> x) <$> xs,
+             (\(_,x,_,_) -> x) <$> xs,
+             (\(_,_,x,_) -> x) <$> xs,
+             (\(_,_,_,x) -> x) <$> xs)
+            
+instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
+  arbitrary = (:|) <$> arbitrary <*> arbitrary
+  shrink x = NE.fromList <$> shrink (NE.toList x)
+
