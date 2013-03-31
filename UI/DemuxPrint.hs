@@ -76,8 +76,8 @@ type WinPos = (Word,Word,Word,Word)
 -- stream histories.
 createWindows :: [StreamHistory] -> IO [Window]
 createWindows shists = do
-  w0 <- initScr
-  (curY,curX) <- scrSize 
+  (curY,curX) <- scrSize
+--  curScr
   let num = i2w$ P.length shists
       (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)

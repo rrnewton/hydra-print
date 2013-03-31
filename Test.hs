@@ -11,25 +11,37 @@ main = do
   CH.start
   initialize
   ref <- newIORef []
-  let redraw = do
+  let reCreate = do
         old <- readIORef ref
         mapM_ delWin old
         ws <- createWindows (replicate 6 undefined)
-        mapM_ wRefresh ws
         writeIORef ref ws
-        return ()
-    
-  forM_ [1..100] $ \i -> do
-    let dispAll str = do
-          ws <- readIORef ref
-          forM ws $ \w ->
-            do wMove w 2 1
-               wAddStr w str
---    _ <- CH.getKey redraw
---    _ <- CH.getKey (return ())
-    dispAll$ "Iter "++show i
-    redraw               
-    threadDelay$ 100 * 1000
+  -- Do it once to create the inital window structure.
+  reCreate
 
-  CH.end
+  let dispAll y str = do
+        ws <- readIORef ref
+        forM ws $ \w ->
+          do wMove w y 1
+             wAddStr w str
 
+      refreshAll = mapM_ wRefresh =<< readIORef ref 
+  
+  let loop i = do 
+   --    _ <- CH.getKey redraw
+       dispAll 2$ "Iter "++show i++"        "
+       refreshAll
+       k <- C.getCh
+       case k of
+         KeyChar 'q' -> do
+           CH.end
+           putStrLn "NCurses finished."
+         KeyResize -> do           
+           reCreate
+           dispAll 2$ "RESIZING! "           
+           loop (i+1)
+         c -> do
+           dispAll 2$ "KeyPress "++show c
+           refreshAll
+           loop (i+1)
+  loop 0
