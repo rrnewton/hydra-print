@@ -14,15 +14,31 @@ category:            Concurrency
 build-type:          Simple
 cabal-version:       >=1.8
 
-library
-  exposed-modules:   UI.DemuxPrint
-                       -- UI.NCurses, UI.NCurses.Enums, UI.NCurses.Panel, UI.NCurses.Types, 
-  -- other-modules:       
-  build-depends:       base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
-                       bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
-                       mtl ==2.1.*, semigroups ==0.9.*, 
-  -- Testing: 
-                       QuickCheck ==2.5.*
-
--- ncurses ==0.2.*, 
+Library
+  Source-repository head
+    type:     git
+    location: https://github.com/rrnewton/demux-print
+  Exposed-modules:  UI.DemuxPrint
+  CPP-options: -DNOTESTING
+  build-depends    base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
+                   bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
+                   mtl ==2.1.*, semigroups ==0.9.*
+   -- ncurses ==0.2.*, 
 --  build-tools:         chs
+
+-- Test-Suite test-demux-print
+--     type:       exitcode-stdio-1.0
+--     main-is:    TestFramework.hs
+--     -- DUPLICATED from above
+--     build-depends:     base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
+--                        bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*, 
+--                        mtl ==2.1.*, semigroups ==0.9.*, 
+
+--     -- Additional dependencies:
+--     ---------------------------
+--                        QuickCheck                 ==2.5.*,
+--                        HUnit                      ==1.2.*,
+--                        test-framework             ==0.8.*,
+--                        test-framework-hunit       ==0.3.*,
+--                        test-framework-quickcheck2 ==0.3.*,
+--                        test-framework-th          ==0.2.*

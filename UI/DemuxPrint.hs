@@ -1,15 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
+
+#ifndef NOTESTING
+{-# LANGUAGE TemplateHaskell #-}
+#endif
+
 -- | A simple utility to multiplex of *dynamic* collection of text streams.  As the
 -- number of streams varies, the multiplexing of the terminal output does too.
 module UI.DemuxPrint
        (
          -- * Main Entrypoints
-         createWindows, initialize
+         createWindows, initialize,
          
          -- * Types
          
          -- * Tiling behavior
          -- computeTiling, applyTiling
+
+#ifndef NOTESTING
+         -- * Testing
+         testSuite
+#endif         
        )
        where
 
@@ -37,7 +48,14 @@ import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty((:|)))
 
+#ifndef NOTESTING
 import Test.QuickCheck hiding (NonEmpty)
+import Test.HUnit (Assertion, assertEqual, assertBool)
+import Test.Framework  (Test, defaultMain)
+import Test.Framework.Providers.HUnit (testCase)
+import Test.Framework.Providers.QuickCheck2 (testProperty)
+import Test.Framework.TH (testGroupGenerator)
+#endif
 
 --------------------------------------------------------------------------------
 -- Types
@@ -45,13 +63,33 @@ import Test.QuickCheck hiding (NonEmpty)
 
 -- | The state of an active `runMultiPipe` computation.
 data MPState =
-  MPState {
-    activeStrms :: [(InputStream ByteString, StreamHistory)],
+  MPState
+  {
+    activeStrms :: [(InputStream ByteString, WindowWidget)],
     finishedStrms :: [StreamHistory]
-    }
+  }
 
--- | The history of a stream.  The view (multiple windows) changes, but the underlying
--- stream histories persist.
+-- | All the state for a widget, that persists beyond the creation and destruction of
+-- individual NCurses windows (and even the reinitialization of the whole system).
+--
+-- These text widgets currently do NOT support line wrapping.  They crop to the right
+-- and at the bottom.
+data WindowWidget =
+  WindowWidget
+  {
+    -- | The current and previous text in the widget.
+    hist :: StreamHistory,
+    -- | Get the current size of the writable area.
+    textSizeYX :: IO (Word,Word),
+    -- | Replace a line within the window, clearing the rest of the line if the
+    -- string is too short, and cropping it if it is too long.  The `Word` argument
+    -- is a zero-based index into the writable area of the window.  Drawing off the
+    -- end of the window willbe ignored.
+    putLine :: Word -> String -> IO ()
+  }
+
+-- | The history of a stream.  The view changes, but the underlying stream histories
+-- persist.
 data StreamHistory =
   StreamHistory {
     -- | The name of a stream might identify a client hostname, or a subprogram run,
@@ -72,8 +110,8 @@ type WinPos = (Word,Word,Word,Word)
 
 --------------------------------------------------------------------------------
 
--- | Create a new batch of windows and display the current state of a set of
--- stream histories.
+-- | Create a new batch of NCurses windows (deleting the old ones) and display the
+-- current state of a set of stream histories.
 createWindows :: [StreamHistory] -> IO [Window]
 createWindows shists = do
   (curY,curX) <- scrSize
@@ -89,6 +127,16 @@ createWindows shists = do
     wAddStr w1 ("Created: "++show tup)    
     wRefresh w1
     return w1
+
+-- | Create a new, persistent scrolling text widget.
+createWindowWidget ioStrm = obj    
+  where
+    obj = WindowWidget {
+            hist  = error "hist",
+            textSizeYX = error "textSizeYX",
+            putLine = \ln str -> do
+               return ()
+          }
 
 initialize = do
   _ <- leaveOk True
@@ -250,8 +298,11 @@ t0 = applyTiling (48,173) (3,2)
 t1 :: WinPos
 t1 = boundingBox t0
 
-case_t0 :: Bool    
-case_t0 = prop_goodtiling (48,173) (3,2)
+#ifndef NOTESTING
+
+case_t0 :: Assertion
+case_t0 = assertBool "Basic tiling example"
+          (prop_goodtiling (48,173) (3,2))
 
 prop_goodtiling :: (Word,Word) -> (Word,Word) -> Bool
 prop_goodtiling (y,x) (splitY,splitX) =
@@ -261,10 +312,15 @@ prop_goodtiling (y,x) (splitY,splitX) =
  where
    tiles     = applyTiling (y,x) (splitY,splitX)
    (h,w,0,0) = boundingBox tiles 
-  
---  computeTiling (y,x)
 
--- testSuite = $(testGroupGenerator)
+testSuite :: Test
+testSuite = $(testGroupGenerator)
+            
+instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
+  arbitrary = (:|) <$> arbitrary <*> arbitrary
+  shrink x = NE.fromList <$> shrink (NE.toList x)
+
+#endif
 
 ----------------------------------------
 -- Missing bits from Data.List.NonEmpty:
@@ -276,11 +332,6 @@ unzip4 xs = ((\(x,_,_,_) -> x) <$> xs,
              (\(_,x,_,_) -> x) <$> xs,
              (\(_,_,x,_) -> x) <$> xs,
              (\(_,_,_,x) -> x) <$> xs)
-            
-instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
-  arbitrary = (:|) <$> arbitrary <*> arbitrary
-  shrink x = NE.fromList <$> shrink (NE.toList x)
-
 
 
 -- | Annoyingly, many libraries use Int where negative values are not allowed.
