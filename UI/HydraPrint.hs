@@ -7,7 +7,7 @@
 
 -- | A simple utility to multiplex of *dynamic* collection of text streams.  As the
 -- number of streams varies, the multiplexing of the terminal output does too.
-module UI.DemuxPrint
+module UI.HydraPrint
        (
          -- * Main Entrypoints
          createWindows, initialize,
@@ -326,7 +326,7 @@ boundingBox wps = (maxY,maxX, minY,minX)
     minX = F.foldl1 min xs
     maxY = F.foldl1 max (NE.zipWith (+) hs ys)
     maxX = F.foldl1 max (NE.zipWith (+) ws xs)
-    (hs,ws,ys,xs) = UI.DemuxPrint.unzip4 wps
+    (hs,ws,ys,xs) = UI.HydraPrint.unzip4 wps
 
 t0 :: NonEmpty WinPos
 t0 = applyTiling (48,173) (3,2)
