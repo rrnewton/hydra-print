@@ -39,8 +39,8 @@ import UI.HSCurses.CursesHelper as CH
 -- import UI.HSCurses.Curses (wMove, defaultBorder)
 import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 
-import Control.Monad.State
-import Control.Monad.Reader
+-- import Control.Monad.State
+-- import Control.Monad.Reader
 
 import Control.Applicative
 import qualified Data.Foldable as F
@@ -64,8 +64,13 @@ import Test.Framework.TH (testGroupGenerator)
 data MPState =
   MPState
   {
-    activeStrms :: [(InputStream ByteString, WindowWidget)],
-    finishedStrms :: [StreamHistory]
+    activeStrms :: M.Map StreamID WindowWidget,
+-- [(InputStream ByteString, WindowWidget)]
+    finishedStrms :: [StreamHistory],
+
+    -- | All ative windows.  Need to be explicitly deleted.
+    windows :: [Window]
+    -- Log: TODO: could log stream create/delete events and their times.
   }
 
 -- | All the state for a widget, that persists beyond the creation and destruction of
@@ -76,6 +81,8 @@ data MPState =
 data WindowWidget =
   WindowWidget
   {
+    -- "Methods"
+    ----------------------------------------
     -- | The current and previous text in the widget.
     hist :: StreamHistory,
     -- | Get the current size of the writable area.
@@ -84,11 +91,17 @@ data WindowWidget =
     -- | Replace a line within the window, clearing the rest of the line if the
     -- string is too short, and cropping it if it is too long.  The `Word` argument
     -- is a zero-based index into the writable area of the window.  Drawing off the
-    -- end of the window willbe ignored.
+    -- end of the window will be ignored.
     putLine :: ByteString -> IO (),
     -- putLineN :: Word -> String -> IO ()
 
-    destroy :: IO ()
+    setWin :: Window -> IO (),
+    
+    destroy :: IO (),
+    
+    -- "Private" state:    
+    ----------------------------------------
+    winRef :: IORef Window
   }
 
 -- | The history of a stream.  The view changes, but the underlying stream histories
@@ -105,7 +118,7 @@ data StreamHistory =
 
 -- | Most of the computation for this module happens in the context of a global,
 -- mutable state.
-type MP a = StateT (IORef MPState) IO a
+-- type MP a = StateT (IORef MPState) IO a
 
 -- | Position of a window: (Height,Width, PosY, PosX)
 --   The same order as accepted by `newWin`.
@@ -132,19 +145,21 @@ createWindows num = do
 createWindowWidget :: String -> IO WindowWidget
 createWindowWidget streamName = do -- ioStrm
   revHist <- newIORef []
-  yRef <- newIORef 0
-  xRef <- newIORef 0
+  winRef  <- newIORef (error "winRef field uninialized")
   let hist = StreamHistory{streamName, revHist}
       putLine str = do
         error "Finish putLine"
         return ()
       textSizeYX = do
-        x <- readIORef xRef
-        y <- readIORef yRef
+        -- x <- readIORef xRef
+        -- y <- readIORef yRef
         error "textSizeYX"
       destroy = error "implement destroy"
-      obj = WindowWidget { hist, textSizeYX, putLine, destroy }
 
+      setWin = error "implement setWin"
+      
+      obj = WindowWidget { hist, textSizeYX, putLine,
+                           destroy, setWin, winRef }
   return obj
 
 initialize :: IO ()
@@ -192,44 +207,61 @@ phase1 s1name merge1 = do
       -- Transition to the steady state.
       CH.start
       cursesEvts <- S.nullInput
+      
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
       merge2 <- concurrentMerge [merge1, cursesEvts]
-      wid0 <- createWindowWidget s1name
-      wid1 <- createWindowWidget s2name
-      let initMap = M.fromList [(0,wid0),(1,wid1)]
-      steadyState initMap 1 s2 merge2
+      wid0   <- createWindowWidget s1name
+      [win0] <- createWindows 1
+      setWin wid0 win0
+      let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
+                             finishedStrms= [],
+                             windows= [win0] }
+      steadyState initSt 1 (s2name,s2) merge2
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
 ----------------------------------------PHASE3----------------------------------------
 -- Re-enter this loop every time there is a new stream.
-steadyState :: M.Map StreamID WindowWidget -> StreamID ->
-               InputStream ByteString -> InputStream Event -> IO ()
-steadyState widMap sidCnt newStrm merged = do
+steadyState :: MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> IO ()
+steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do  
   newStrm' <- preProcess sidCnt newStrm
   merged'  <- concurrentMerge [merged, newStrm']
   nxt      <- S.read merged'
-  case nxt of
-    Nothing -> return ()
-    Just (NewStream (s2name,s2))       -> steadyState widMap (sidCnt+1) s2 merged'
-    Just (NewStrLine sid (StrmElt ln)) -> putLine (widMap!sid) ln
-    Just (NewStrLine sid EOS)          -> do
-      destroy (widMap!sid)
-      reCreate -- And zip with the active stream IDs...
-    Just (CursesKeyEvent key) -> do
-      case key of
-        KeyResize -> do           
-         C.endWin
-         C.update
-         reCreate
- where
-   reCreate = do
---     old <- readIORef ref
---     mapM_ delWin old
-     ws <- createWindows (sidCnt+1)
---     writeIORef ref ws
-     return ()
+  widg     <- createWindowWidget newName
 
+  let active2 = M.insert sidCnt widg activeStrms
+  reCreate active2
+  
+  let loop mps@MPState{activeStrms, finishedStrms} = do
+        case nxt of
+          Nothing -> return ()
+          Just (NewStrLine sid (StrmElt ln)) -> putLine (activeStrms!sid) ln
+          Just (NewStrLine sid EOS)          -> do
+            destroy (activeStrms!sid)
+            let active' = M.delete sid activeStrms
+            reCreate active'
+            loop mps{activeStrms=active',
+                     finishedStrms= hist (activeStrms!sid) : finishedStrms}
+
+          Just (NewStream (s2name,s2))       -> do            
+            steadyState mps (sidCnt+1) (s2name,s2) merged'
+          Just (CursesKeyEvent key) -> do
+            case key of
+              KeyResize -> do           
+               C.endWin
+               C.update
+               reCreate activeStrms
+               loop mps
+  loop state0
+ where
+   reCreate active' = do
+      forM_ windows delWin 
+      ws <- createWindows (fromIntegral(M.size active'))      
+      -- Guaranteed to be in ascending key order, which in our case is
+      -- first-stream-to-join first.
+      forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
+        setWin wid win 
+     
 --   let ref = do wRefresh w1; wRefresh w2
 --    wMove w1 (2+(i `mod` 6)) (3+i)
 --    wAddStr w1 $"ERGH "++show i
