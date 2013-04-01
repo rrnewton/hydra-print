@@ -26,6 +26,7 @@ module UI.HydraPrint
 
 import Data.IORef
 import Data.Word
+import Data.Map  as M
 import Data.List as L 
 import Data.ByteString.Char8 as B
 import Prelude as P hiding (unzip4) 
@@ -84,7 +85,10 @@ data WindowWidget =
     -- string is too short, and cropping it if it is too long.  The `Word` argument
     -- is a zero-based index into the writable area of the window.  Drawing off the
     -- end of the window willbe ignored.
-    putLine :: Word -> String -> IO ()
+    putLine :: ByteString -> IO (),
+    -- putLineN :: Word -> String -> IO ()
+
+    destroy :: IO ()
   }
 
 -- | The history of a stream.  The view changes, but the underlying stream histories
@@ -116,7 +120,6 @@ createWindows num = do
   (curY,curX) <- scrSize
   let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
-  
   forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     wBorder w1 defaultBorder
@@ -126,13 +129,13 @@ createWindows num = do
     return w1
 
 -- | Create a new, persistent scrolling text widget.
-createWindowWidget :: String -> InputStream ByteString -> IO WindowWidget
-createWindowWidget streamName ioStrm = do
+createWindowWidget :: String -> IO WindowWidget
+createWindowWidget streamName = do -- ioStrm
   revHist <- newIORef []
   yRef <- newIORef 0
   xRef <- newIORef 0
   let hist = StreamHistory{streamName, revHist}
-      putLine ln str = do
+      putLine str = do
         error "Finish putLine"
         return ()
       textSizeYX = do
@@ -143,14 +146,11 @@ createWindowWidget streamName ioStrm = do
 
   return obj
 
-
-
 initialize :: IO ()
 initialize = do
   _ <- leaveOk True
   _ <- cursSet CursorInvisible
   return ()
-
     
 --------------------------------------------------------------------------------
 
@@ -194,31 +194,40 @@ phase1 merge1 = do
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
       merge2 <- concurrentMerge [merge1, cursesEvts]
-      steadyState 1 s2 merge2
+      wid0 <- createWindowWidget "s0"
+      wid1 <- createWindowWidget "s1"
+      let initMap = M.fromList [(0,wid0),(1,wid1)]
+      steadyState initMap 1 s2 merge2
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
 ----------------------------------------PHASE3----------------------------------------
 -- Re-enter this loop every time there is a new stream.
-steadyState :: StreamID -> InputStream ByteString -> InputStream Event -> IO ()
-steadyState sidCnt newStrm merged = do
+steadyState :: M.Map StreamID WindowWidget -> StreamID ->
+               InputStream ByteString -> InputStream Event -> IO ()
+steadyState widMap sidCnt newStrm merged = do
   newStrm' <- preProcess sidCnt newStrm
   merged'  <- concurrentMerge [merged, newStrm']
   nxt      <- S.read merged'
   case nxt of
     Nothing -> return ()
-    Just (NewStream s2)              -> steadyState (sidCnt+1) s2 merged'
-    Just (NewStrLine _ (StrmElt ln)) -> do
-      error "FINISHME - display a line"
-    Just (NewStrLine _ EOS)          -> do
-      error "FINISHME - Retile and redraw..."
+    Just (NewStream s2)                -> steadyState widMap (sidCnt+1) s2 merged'
+    Just (NewStrLine sid (StrmElt ln)) -> putLine (widMap!sid) ln
+    Just (NewStrLine sid EOS)          -> do
+      destroy (widMap!sid)
+      reCreate -- And zip with the active stream IDs...
     Just (CursesKeyEvent key) -> do
       case key of
         KeyResize -> do           
          C.endWin
          C.update
---           reCreate
---           dispAll 3$ "RESIZING! "
---           loop (i+1)
+         reCreate
+ where
+   reCreate = do
+--     old <- readIORef ref
+--     mapM_ delWin old
+     ws <- createWindows (sidCnt+1)
+--     writeIORef ref ws
+     return ()
 
 --   let ref = do wRefresh w1; wRefresh w2
 --    wMove w1 (2+(i `mod` 6)) (3+i)
@@ -233,7 +242,7 @@ preProcess id s = do
 
 
 
-type StreamID = Word64
+type StreamID = Word
 
 
 -- | There are three relevant kinds of events inside our inner loop.
