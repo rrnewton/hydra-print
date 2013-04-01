@@ -10,7 +10,8 @@
 module UI.HydraPrint
        (
          -- * Main Entrypoints
-         createWindows, initialize,
+         hydraPrint
+         -- createWindows, initialize,
          
          -- * Types
          
@@ -19,7 +20,7 @@ module UI.HydraPrint
 
 #ifndef NOTESTING
          -- * Testing
-         testSuite
+         , testSuite
 #endif         
        )
        where
@@ -60,7 +61,7 @@ import Test.Framework.TH (testGroupGenerator)
 -- Types
 --------------------------------------------------------------------------------
 
--- | The state of an active `runMultiPipe` computation.
+-- | The state of an active `hydraPrint` computation.
 data MPState =
   MPState
   {
@@ -69,7 +70,7 @@ data MPState =
     finishedStrms :: [StreamHistory],
 
     -- | All ative windows.  Need to be explicitly deleted.
-    windows :: [Window]
+    windows :: [CWindow]
     -- Log: TODO: could log stream create/delete events and their times.
   }
 
@@ -95,13 +96,13 @@ data WindowWidget =
     putLine :: ByteString -> IO (),
     -- putLineN :: Word -> String -> IO ()
 
-    setWin :: Window -> IO (),
+    setWin :: CWindow -> IO (),
     
     destroy :: IO (),
     
     -- "Private" state:    
     ----------------------------------------
-    winRef :: IORef Window
+    winRef :: IORef CWindow
   }
 
 -- | The history of a stream.  The view changes, but the underlying stream histories
@@ -124,11 +125,14 @@ data StreamHistory =
 --   The same order as accepted by `newWin`.
 type WinPos = (Word,Word,Word,Word)
 
+-- | Along with the raw pointer, remember the size at which a window was created:
+data CWindow = CWindow C.Window WinPos 
+
 --------------------------------------------------------------------------------
 
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: Word -> IO [Window]
+createWindows :: Word -> IO [CWindow]
 createWindows num = do
   (curY,curX) <- scrSize
   let (nX,nY)   = computeTiling num
@@ -139,7 +143,7 @@ createWindows num = do
     wMove w1 1 1
     wAddStr w1 ("Created: "++show tup)    
     wRefresh w1
-    return w1
+    return (CWindow w1 tup)
 
 -- | Create a new, persistent scrolling text widget.
 createWindowWidget :: String -> IO WindowWidget
@@ -148,15 +152,21 @@ createWindowWidget streamName = do -- ioStrm
   winRef  <- newIORef (error "winRef field uninialized")
   let hist = StreamHistory{streamName, revHist}
       putLine str = do
-        error "Finish putLine"
-        return ()
+        CWindow wp (y,x,_,_) <- readIORef winRef
+        modifyIORef revHist (str:)
+        wMove wp 3 1
+        let padded = B.unpack str ++
+                     P.replicate (w2i x - B.length str) ' '
+        wAddStr wp padded
       textSizeYX = do
-        -- x <- readIORef xRef
-        -- y <- readIORef yRef
-        error "textSizeYX"
+        CWindow _ (y,x,_,_) <- readIORef winRef
+        return (y,x)
       destroy = error "implement destroy"
 
-      setWin = error "implement setWin"
+      setWin cwin@(CWindow w _) = do
+        writeIORef winRef cwin
+--        wRefresh w
+        return ()
       
       obj = WindowWidget { hist, textSizeYX, putLine,
                            destroy, setWin, winRef }
@@ -175,11 +185,11 @@ initialize = do
 --
 -- For a static collection of input streams, just use `System.IO.Streams.fromList`
 --
--- `runMultiPipe` is a blocking call that doesn't return until ALL streams that
+-- `hydraPrint` is a blocking call that doesn't return until ALL streams that
 -- appear produce an end-of-stream, AND the stream-source itself reaches
 -- end-of-stream.
-runMultiPipe :: InputStream (String, InputStream ByteString) -> IO ()
-runMultiPipe strmSrc = phase0 =<< S.map NewStream strmSrc
+hydraPrint :: InputStream (String, InputStream ByteString) -> IO ()
+hydraPrint strmSrc = phase0 =<< S.map NewStream strmSrc
 ----------------------------------------PHASE0----------------------------------------  
 -- Nothing to do before there is at least ONE stream...   
 phase0 :: InputStream Event -> IO ()
@@ -192,7 +202,7 @@ phase0 strmSrc' = do
      -- Next, we need a "select/epoll".  We use concurrentMerge.
      merge1 <- concurrentMerge [strmSrc', s1']
      phase1 s1name merge1
-   _ -> error "runMultiPipe: Internal error. Unexpected event."
+   _ -> error "hydraPrint: Internal error. Unexpected event."
 ----------------------------------------PHASE1----------------------------------------
 -- Initially, we start in "cooked" (non-ncurses) mode, and stay there as long as
 -- there is only one output stream.     
@@ -255,17 +265,13 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   loop state0
  where
    reCreate active' = do
-      forM_ windows delWin 
+      forM_ windows (\ (CWindow w _) -> delWin w)
       ws <- createWindows (fromIntegral(M.size active'))      
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
      
---   let ref = do wRefresh w1; wRefresh w2
---    wMove w1 (2+(i `mod` 6)) (3+i)
---    wAddStr w1 $"ERGH "++show i
-
 -- Helper: import a bytestring into our system.
 preProcess :: StreamID -> InputStream ByteString -> IO (InputStream Event)
 preProcess id s = do
@@ -347,7 +353,7 @@ test = do
   S.unRead x s1
   _ <- P.getLine
   
-  runMultiPipe =<< S.fromList [("s1",s1),("s2",s2)]
+  hydraPrint =<< S.fromList [("s1",s1),("s2",s2)]
 
 puts :: String -> IO ()
 puts s = drawLine (P.length s) s
@@ -437,7 +443,12 @@ dupStream = error "dupStream unimplemented"
 -- | This makes the EOS into an explicit, penultimate message. This way it survives
 -- `concurrentMerge`.
 liftStream :: InputStream a -> IO (InputStream (Lifted a))
-liftStream =  error "liftStream"
+liftStream ins = do
+  undefined
+  -- x <- S.read ins
+  -- case x of
+  --   Just a  -> return (Just$ StrmElt a)
+  --   Nothing -> error "liftStream"
 
 -- | Datatype for reifying end-of-stream.
 data Lifted a = EOS | StrmElt a
