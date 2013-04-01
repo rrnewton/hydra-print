@@ -24,8 +24,6 @@ module UI.HydraPrint
        )
        where
 
-
-
 import Data.IORef
 import Data.Word
 import Data.List as L 
@@ -113,12 +111,10 @@ type WinPos = (Word,Word,Word,Word)
 
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: [StreamHistory] -> IO [Window]
-createWindows shists = do
+createWindows :: Word -> IO [Window]
+createWindows num = do
   (curY,curX) <- scrSize
---  curScr
-  let num = i2w$ P.length shists
-      (nX,nY)   = computeTiling num
+  let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
   
   forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do

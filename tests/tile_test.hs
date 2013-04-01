@@ -2,7 +2,7 @@
 import Data.IORef
 import Control.Monad
 import Control.Concurrent
-import UI.DemuxPrint
+import UI.HydraPrint (initialize, createWindows)
 import UI.HSCurses.CursesHelper as CH
 import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 
@@ -14,7 +14,7 @@ main = do
   let reCreate = do
         old <- readIORef ref
         mapM_ delWin old
-        ws <- createWindows (replicate 6 undefined)
+        ws <- createWindows 6
         writeIORef ref ws
   -- Do it once to create the inital window structure.
   reCreate

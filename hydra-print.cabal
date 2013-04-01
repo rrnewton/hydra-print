@@ -21,7 +21,7 @@ license:             BSD3
 license-file:        LICENSE
 author:              Ryan Newton
 maintainer:          Ryan Newton <rrnewton@gmail.com>
--- copyright:           
+copyright:           2013, Ryan Newton
 category:            Concurrency
 build-type:          Simple
 cabal-version:       >=1.8
