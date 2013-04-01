@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, NamedFieldPuns #-}
 {-# LANGUAGE CPP #-}
 
 #ifndef NOTESTING
@@ -80,7 +80,8 @@ data WindowWidget =
     -- | The current and previous text in the widget.
     hist :: StreamHistory,
     -- | Get the current size of the writable area.
-    textSizeYX :: IO (Word,Word),
+    textSizeYX :: IO (Word,Word),    
+    
     -- | Replace a line within the window, clearing the rest of the line if the
     -- string is too short, and cropping it if it is too long.  The `Word` argument
     -- is a zero-based index into the writable area of the window.  Drawing off the
@@ -97,7 +98,7 @@ data StreamHistory =
     -- different windows from one another, especially as the layout changes.  
     streamName :: String, 
     -- | A (reverse) list of lines with the most recently produced at the head.
-    revhist :: IORef [ByteString]
+    revHist :: IORef [ByteString]    
   }
 
 -- | Most of the computation for this module happens in the context of a global,
@@ -129,15 +130,26 @@ createWindows shists = do
     return w1
 
 -- | Create a new, persistent scrolling text widget.
-createWindowWidget ioStrm = obj    
-  where
-    obj = WindowWidget {
-            hist  = error "hist",
-            textSizeYX = error "textSizeYX",
-            putLine = \ln str -> do
-               return ()
-          }
+createWindowWidget :: String -> InputStream ByteString -> IO WindowWidget
+createWindowWidget streamName ioStrm = do
+  revHist <- newIORef []
+  yRef <- newIORef 0
+  xRef <- newIORef 0
+  let hist = StreamHistory{streamName, revHist}
+      putLine ln str = do
+        error "Finish putLine"
+        return ()
+      textSizeYX = do
+        x <- readIORef xRef
+        y <- readIORef yRef
+        error "textSizeYX"
+      obj = WindowWidget { hist, textSizeYX, putLine }
 
+  return obj
+
+
+
+initialize :: IO ()
 initialize = do
   _ <- leaveOk True
   _ <- cursSet CursorInvisible
@@ -150,64 +162,90 @@ initialize = do
 -- that joins dynamically, exits once it issues an end-of-stream.
 --
 -- For a static collection of input streams, just use `System.IO.Streams.fromList`
--- runMultiPipe :: InputStream (InputStream ByteString) -> IO ()
--- runMultiPipe strmSrc = do
-runMultiPipe :: [InputStream ByteString] -> IO ()
-runMultiPipe ls = do
-  CH.start
-  
-  w1 <- C.newWin 10 40 10 10  
-  w2 <- C.newWin 10 35 10 49
-  wBorder w1 defaultBorder
-  wBorder w2 defaultBorder
+--
+-- `runMultiPipe` is a blocking call that doesn't return until ALL streams that
+-- appear produce an end-of-stream, AND the stream-source itself reaches
+-- end-of-stream.
+runMultiPipe :: InputStream (InputStream ByteString) -> IO ()
+runMultiPipe strmSrc = phase0 =<< S.map NewStream strmSrc
+----------------------------------------PHASE0----------------------------------------  
+-- Nothing to do before there is at least ONE stream...   
+phase0 :: InputStream Event -> IO ()
+phase0 strmSrc' = do 
+  ms1 <- S.read strmSrc'
+  case ms1 of
+   Nothing -> return ()
+   Just (NewStream s1) -> do
+     s1'      <- preProcess 0 s1
+     -- Next, we need a "select/epoll".  We use concurrentMerge.
+     merge1 <- concurrentMerge [strmSrc', s1']
+     phase1 merge1
+   _ -> error "runMultiPipe: Internal error. Unexpected event."
+----------------------------------------PHASE1----------------------------------------
+-- Initially, we start in "cooked" (non-ncurses) mode, and stay there as long as
+-- there is only one output stream.     
+phase1 :: InputStream Event -> IO ()
+phase1 merge1 = do 
+  nxt <- S.read merge1
+  case nxt of
+    Nothing                          -> return ()
+    Just (NewStrLine _ (StrmElt ln)) -> B.putStrLn ln >> phase1 merge1
+    Just (NewStrLine _ EOS)          -> phase0 merge1
+    Just (NewStream s2)              -> do
+      -- Transition to the steady state.
+      CH.start
+      cursesEvts <- S.nullInput
+      -- Warning, because the curses events go into a concurrentMerge, they will keep
+      -- being read into Haskell, irrespective of what this "main" thread does.     
+      merge2 <- concurrentMerge [merge1, cursesEvts]
+      steadyState 1 s2 merge2
+    Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
-  -- (y,x) <- getYX w1
-  -- move (y+1) (x+1)
-  wMove w1 1 1
-  wAddStr w1 "hello"
-  wRefresh w1
-  wRefresh w2
---  refresh
---  _ <- CH.getKey C.refresh
+----------------------------------------PHASE3----------------------------------------
+-- Re-enter this loop every time there is a new stream.
+steadyState :: StreamID -> InputStream ByteString -> InputStream Event -> IO ()
+steadyState sidCnt newStrm merged = do
+  newStrm' <- preProcess sidCnt newStrm
+  merged'  <- concurrentMerge [merged, newStrm']
+  nxt      <- S.read merged'
+  case nxt of
+    Nothing -> return ()
+    Just (NewStream s2)              -> steadyState (sidCnt+1) s2 merged'
+    Just (NewStrLine _ (StrmElt ln)) -> do
+      error "FINISHME - display a line"
+    Just (NewStrLine _ EOS)          -> do
+      error "FINISHME - Retile and redraw..."
+    Just (CursesKeyEvent key) -> do
+      case key of
+        KeyResize -> do           
+         C.endWin
+         C.update
+--           reCreate
+--           dispAll 3$ "RESIZING! "
+--           loop (i+1)
 
-  let [s1,s2] = ls
-  s1' <- S.map Left s1
-  s2' <- S.map Right s2
-  s3 <- concurrentMerge [s1', s2']
+--   let ref = do wRefresh w1; wRefresh w2
+--    wMove w1 (2+(i `mod` 6)) (3+i)
+--    wAddStr w1 $"ERGH "++show i
 
-  x <- S.read s3
-  wMove w1 2 1  
-  wAddStr w1$ "first: "++show x
-  wRefresh w1
-
-  let
-      f i ob = do
-        wMove w2 (1 + i`mod`8) 2
-        wAddStr  w2 $"stream "++show ob
-        wRefresh w2
-    
-  let ref = do wRefresh w1; wRefresh w2
-  forM_ [1..8] $ \i -> do 
-    wMove w1 (2+(i `mod` 6)) (3+i)
-    wAddStr w1 $"ERGH "++show i
-    wRefresh w1    
-    o <- S.read s3
-    case o of
-      (Just y) -> f i y
-      Nothing -> do
-        -- move 2 2
-        -- wAddStr w "DONE"
-        -- refresh
-        wMove    w2 1 3
-        wAddStr  w2 $"DONE "++show i
-        wRefresh w2        
-    ref
-    threadDelay$ 500 * 1000
-    return ()
-  _ <- CH.getKey ref -- C.refresh    
-  CH.end
+-- Helper: import a bytestring into our system.
+preProcess :: StreamID -> InputStream ByteString -> IO (InputStream Event)
+preProcess id s = do
+  s'  <- S.lines s
+  s'' <- liftStream s'
+  S.map (NewStrLine id) s''
 
 
+
+type StreamID = Word64
+
+
+-- | There are three relevant kinds of events inside our inner loop.
+data Event = NewStream (InputStream ByteString)
+           | NewStrLine {-# UNPACK #-} !StreamID (Lifted ByteString)
+           | CursesKeyEvent Key
+--  deriving (Show,Eq,Read,Ord)
+           
 --------------------------------------------------------------------------------
 -- Tiling behavior
 --------------------------------------------------------------------------------    
@@ -271,12 +309,10 @@ test = do
   S.unRead x s1
   _ <- P.getLine
   
-  runMultiPipe [s1,s2]
-
+  runMultiPipe =<< S.fromList [s1,s2]
 
 puts :: String -> IO ()
 puts s = drawLine (P.length s) s
-
 
 --------------------------------------------------------------------------------
 -- Tests
@@ -323,9 +359,9 @@ instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
 
 #endif
 
-----------------------------------------
--- Missing bits from Data.List.NonEmpty:
-----------------------------------------
+-----------------------------------------
+-- Missing bits that should be elsewhere:
+-----------------------------------------
 
 -- | 'unzip4' for `NonEmpty` lists
 unzip4 :: Functor f => f (a,b,c,d) -> (f a, f b, f c, f d)
@@ -346,3 +382,24 @@ w2i w = if i < 0
         else i
   where 
   i = fromIntegral w
+
+-- | io-streams do not by default support tee or fan-out, because all reads "pop".
+--   This broadcasts an InputStream to two new InputStreams, each of which will
+--   receive every element.
+--
+--   One useful application of this is creating additional copies of a stream before
+--    it is connected to a downstream operator like
+--    `System.IO.Streams.Concurrent.concurrentMerge`.  Once that connection happens,
+--    even if one stops demanding output from the `concurrentMerge`, one cannot know
+--    how many elements it popped from the original input stream already.
+dupStream :: InputStream a -> IO (InputStream a, InputStream a)
+dupStream = error "dupStream unimplemented"
+
+
+-- | This makes the EOS into an explicit, penultimate message. This way it survives
+-- `concurrentMerge`.
+liftStream :: InputStream a -> IO (InputStream (Lifted a))
+liftStream =  error "liftStream"
+
+-- | Datatype for reifying end-of-stream.
+data Lifted a = EOS | StrmElt a
