@@ -3,7 +3,7 @@
 
 name:                hydra-print
 version:             0.1.0.0
-synopsis:            Curses interface to view multiple ByteString streams in parallel.
+synopsis:            NCurses interface to view multiple ByteString streams in parallel.
 description: 
 
   Output from parallel subprocesses is an ugly, many-headed beast.
@@ -11,11 +11,11 @@ description:
   set output streams, displayed without interleaving.  This is a
   common problem, for example, with parallel compiles, or
   data-processing scripts.
-
+  .
   Specifically, this small library will split the screen when
   parallelism occurs, and unsplit it when the parallelism is 
-  finished (i.e. dynamically growing and losing "heads").
-  The `io-streams` library is used for all stream inputs.
+  finished (i.e. dynamically growing and losing \"heads\").
+  The @io-streams@ library is used for all stream inputs.
 
 license:             BSD3
 license-file:        LICENSE
@@ -29,16 +29,14 @@ cabal-version:       >=1.8
 Library
   Exposed-modules:  UI.HydraPrint
   CPP-options: -DNOTESTING
+  Source-repository head
+    type:     git
+    location: https://github.com/rrnewton/hydra-print
   build-depends: base, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, hscurses
   -- build-depends base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
   --               mtl ==2.1.*, semigroups ==0.9.*,
   --               bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*
-
-  -- Source-repository head
-  --   type:     git
-  --   location: https://github.com/rrnewton/hydra-print
-
 
 Test-Suite test-hydra-print
     type:       exitcode-stdio-1.0
