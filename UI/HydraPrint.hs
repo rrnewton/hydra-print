@@ -142,7 +142,8 @@ createWindowWidget streamName = do -- ioStrm
         x <- readIORef xRef
         y <- readIORef yRef
         error "textSizeYX"
-      obj = WindowWidget { hist, textSizeYX, putLine }
+      destroy = error "implement destroy"
+      obj = WindowWidget { hist, textSizeYX, putLine, destroy }
 
   return obj
 
@@ -162,7 +163,7 @@ initialize = do
 -- `runMultiPipe` is a blocking call that doesn't return until ALL streams that
 -- appear produce an end-of-stream, AND the stream-source itself reaches
 -- end-of-stream.
-runMultiPipe :: InputStream (InputStream ByteString) -> IO ()
+runMultiPipe :: InputStream (String, InputStream ByteString) -> IO ()
 runMultiPipe strmSrc = phase0 =<< S.map NewStream strmSrc
 ----------------------------------------PHASE0----------------------------------------  
 -- Nothing to do before there is at least ONE stream...   
@@ -171,31 +172,31 @@ phase0 strmSrc' = do
   ms1 <- S.read strmSrc'
   case ms1 of
    Nothing -> return ()
-   Just (NewStream s1) -> do
+   Just (NewStream (s1name,s1)) -> do
      s1'      <- preProcess 0 s1
      -- Next, we need a "select/epoll".  We use concurrentMerge.
      merge1 <- concurrentMerge [strmSrc', s1']
-     phase1 merge1
+     phase1 s1name merge1
    _ -> error "runMultiPipe: Internal error. Unexpected event."
 ----------------------------------------PHASE1----------------------------------------
 -- Initially, we start in "cooked" (non-ncurses) mode, and stay there as long as
 -- there is only one output stream.     
-phase1 :: InputStream Event -> IO ()
-phase1 merge1 = do 
+phase1 :: String -> InputStream Event -> IO ()
+phase1 s1name merge1 = do 
   nxt <- S.read merge1
   case nxt of
     Nothing                          -> return ()
-    Just (NewStrLine _ (StrmElt ln)) -> B.putStrLn ln >> phase1 merge1
+    Just (NewStrLine _ (StrmElt ln)) -> B.putStrLn ln >> phase1 s1name merge1
     Just (NewStrLine _ EOS)          -> phase0 merge1
-    Just (NewStream s2)              -> do
+    Just (NewStream (s2name,s2))     -> do
       -- Transition to the steady state.
       CH.start
       cursesEvts <- S.nullInput
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
       merge2 <- concurrentMerge [merge1, cursesEvts]
-      wid0 <- createWindowWidget "s0"
-      wid1 <- createWindowWidget "s1"
+      wid0 <- createWindowWidget s1name
+      wid1 <- createWindowWidget s2name
       let initMap = M.fromList [(0,wid0),(1,wid1)]
       steadyState initMap 1 s2 merge2
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
@@ -210,7 +211,7 @@ steadyState widMap sidCnt newStrm merged = do
   nxt      <- S.read merged'
   case nxt of
     Nothing -> return ()
-    Just (NewStream s2)                -> steadyState widMap (sidCnt+1) s2 merged'
+    Just (NewStream (s2name,s2))       -> steadyState widMap (sidCnt+1) s2 merged'
     Just (NewStrLine sid (StrmElt ln)) -> putLine (widMap!sid) ln
     Just (NewStrLine sid EOS)          -> do
       destroy (widMap!sid)
@@ -246,7 +247,7 @@ type StreamID = Word
 
 
 -- | There are three relevant kinds of events inside our inner loop.
-data Event = NewStream (InputStream ByteString)
+data Event = NewStream (String, InputStream ByteString)
            | NewStrLine {-# UNPACK #-} !StreamID (Lifted ByteString)
            | CursesKeyEvent Key
 --  deriving (Show,Eq,Read,Ord)
@@ -314,7 +315,7 @@ test = do
   S.unRead x s1
   _ <- P.getLine
   
-  runMultiPipe =<< S.fromList [s1,s2]
+  runMultiPipe =<< S.fromList [("s1",s1),("s2",s2)]
 
 puts :: String -> IO ()
 puts s = drawLine (P.length s) s
