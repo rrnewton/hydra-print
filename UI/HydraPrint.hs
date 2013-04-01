@@ -359,51 +359,6 @@ puts :: String -> IO ()
 puts s = drawLine (P.length s) s
 
 --------------------------------------------------------------------------------
--- Tests
---------------------------------------------------------------------------------
-
--- Returns (inclusive,exclusive) bounds.
-boundingBox :: NE.NonEmpty WinPos -> WinPos
-boundingBox wps = (maxY,maxX, minY,minX)
-  where
-    minY = F.foldl1 min ys
-    minX = F.foldl1 min xs
-    maxY = F.foldl1 max (NE.zipWith (+) hs ys)
-    maxX = F.foldl1 max (NE.zipWith (+) ws xs)
-    (hs,ws,ys,xs) = UI.HydraPrint.unzip4 wps
-
-t0 :: NonEmpty WinPos
-t0 = applyTiling (48,173) (3,2)
-
-t1 :: WinPos
-t1 = boundingBox t0
-
-#ifndef NOTESTING
-
-case_t0 :: Assertion
-case_t0 = assertBool "Basic tiling example"
-          (noprop_goodtiling (48,173) (3,2))
-
--- DISABLING: This hangs under quickcheck.
-noprop_goodtiling :: (Word,Word) -> (Word,Word) -> Bool
-noprop_goodtiling (y,x) (splitY,splitX) =
-  if (y>0 && x>0 && splitY>0 && splitX > 0) 
-  then (h == y && w == x)
-  else True -- Trivially.
- where
-   tiles     = applyTiling (y,x) (splitY,splitX)
-   (h,w,0,0) = boundingBox tiles 
-
-testSuite :: Test
-testSuite = $(testGroupGenerator)
-            
-instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
-  arbitrary = (:|) <$> arbitrary <*> arbitrary
-  shrink x = NE.fromList <$> shrink (NE.toList x)
-
-#endif
-
---------------------------------------------------------------------------------
 -- Missing bits that should be elsewhere:
 --------------------------------------------------------------------------------
 
@@ -456,4 +411,57 @@ liftStream ins =
          
 -- | Datatype for reifying end-of-stream.
 data Lifted a = EOS | StrmElt a
+  deriving (Show,Eq,Read,Ord)
+                      
+  
 
+--------------------------------------------------------------------------------
+-- Tests
+--------------------------------------------------------------------------------
+
+-- Returns (inclusive,exclusive) bounds.
+boundingBox :: NE.NonEmpty WinPos -> WinPos
+boundingBox wps = (maxY,maxX, minY,minX)
+  where
+    minY = F.foldl1 min ys
+    minX = F.foldl1 min xs
+    maxY = F.foldl1 max (NE.zipWith (+) hs ys)
+    maxX = F.foldl1 max (NE.zipWith (+) ws xs)
+    (hs,ws,ys,xs) = UI.HydraPrint.unzip4 wps
+
+t0 :: NonEmpty WinPos
+t0 = applyTiling (48,173) (3,2)
+
+t1 :: WinPos
+t1 = boundingBox t0
+
+#ifndef NOTESTING
+
+case_t0 :: Assertion
+case_t0 = assertBool "Basic tiling example"
+          (noprop_goodtiling (48,173) (3,2))
+
+-- DISABLING: This hangs under quickcheck.
+noprop_goodtiling :: (Word,Word) -> (Word,Word) -> Bool
+noprop_goodtiling (y,x) (splitY,splitX) =
+  if (y>0 && x>0 && splitY>0 && splitX > 0) 
+  then (h == y && w == x)
+  else True -- Trivially.
+ where
+   tiles     = applyTiling (y,x) (splitY,splitX)
+   (h,w,0,0) = boundingBox tiles 
+
+testSuite :: Test
+testSuite = $(testGroupGenerator)
+            
+instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
+  arbitrary = (:|) <$> arbitrary <*> arbitrary
+  shrink x = NE.fromList <$> shrink (NE.toList x)
+
+case_lift :: Assertion
+case_lift = do 
+  x <- liftStream =<< S.fromList [1..4]
+  y <- S.toList x
+  assertEqual "eq" [StrmElt 1,StrmElt 2,StrmElt 3,StrmElt 4,EOS] y 
+
+#endif
