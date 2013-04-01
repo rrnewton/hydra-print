@@ -403,9 +403,9 @@ instance (Arbitrary a) => Arbitrary (NE.NonEmpty a) where
 
 #endif
 
------------------------------------------
+--------------------------------------------------------------------------------
 -- Missing bits that should be elsewhere:
------------------------------------------
+--------------------------------------------------------------------------------
 
 -- | 'unzip4' for `NonEmpty` lists
 unzip4 :: Functor f => f (a,b,c,d) -> (f a, f b, f c, f d)
@@ -440,15 +440,20 @@ dupStream :: InputStream a -> IO (InputStream a, InputStream a)
 dupStream = error "dupStream unimplemented"
 
 
--- | This makes the EOS into an explicit, penultimate message. This way it survives
+-- | This makes the EOS into an /explicit/, penultimate message. This way it survives
 -- `concurrentMerge`.
 liftStream :: InputStream a -> IO (InputStream (Lifted a))
-liftStream ins = do
-  undefined
-  -- x <- S.read ins
-  -- case x of
-  --   Just a  -> return (Just$ StrmElt a)
-  --   Nothing -> error "liftStream"
-
+liftStream ins =
+  do flag <- newIORef True
+     makeInputStream $ do
+       x   <- S.read ins
+       flg <- readIORef flag
+       case x of
+         Just y -> return (Just (StrmElt y))
+         Nothing | flg -> do writeIORef flag False
+                             return (Just EOS)
+                 | otherwise -> return Nothing
+         
 -- | Datatype for reifying end-of-stream.
 data Lifted a = EOS | StrmElt a
+
