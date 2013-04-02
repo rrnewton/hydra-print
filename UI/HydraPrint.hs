@@ -207,6 +207,8 @@ initialize = do
   _ <- leaveOk True
   _ <- cursSet CursorInvisible
   return ()
+
+dbgLn = P.putStrLn
     
 --------------------------------------------------------------------------------
 
@@ -224,10 +226,14 @@ hydraPrint strmSrc = phase0 =<< S.map NewStream strmSrc
 -- Nothing to do before there is at least ONE stream...   
 phase0 :: InputStream Event -> IO ()
 phase0 strmSrc' = do 
+  dbgLn $ "phase0: blocking for event."
   ms1 <- S.read strmSrc'
   case ms1 of
-   Nothing -> return ()
+   Nothing -> do 
+     dbgLn $ "phase0: stream ended"
+     return ()
    Just (NewStream (s1name,s1)) -> do
+     dbgLn $ "phase0: new (first) stream! ("++s1name++")  Moving to phase1."
      s1'      <- preProcess 0 s1
      -- Next, we need a "select/epoll".  We use concurrentMerge.
      merge1 <- concurrentMerge [strmSrc', s1']
@@ -238,20 +244,21 @@ phase0 strmSrc' = do
 -- there is only one output stream.     
 phase1 :: String -> InputStream Event -> IO ()
 phase1 s1name merge1 = do 
+  dbgLn $ "phase1: blocking for event."
   nxt <- S.read merge1
   case nxt of
     Nothing                          -> do
-      P.putStrLn $ "Streams ended in phase1!"
+      dbgLn $ "Streams ended in phase1!"
       return ()
     Just (NewStrLine _ (StrmElt ln)) -> do
-      P.putStrLn $ "Got a line! "
+--      dbgLn $ "Got a line! "
       B.putStrLn ln
       phase1 s1name merge1
     Just (NewStrLine sid EOS)          -> do 
-      P.putStrLn $ "Got stream EOS! ID "++show sid
+      dbgLn $ "Got stream EOS! ID "++show sid
       phase0 merge1
     Just (NewStream (s2name,s2))     -> do
-      P.putStrLn $ "Got newStream! "++s2name++".  Transition to steady state... (press enter)"
+      dbgLn $ "Got newStream! "++s2name++".  Transition to steady state... (press enter)"
       P.getLine
 
       -- Transition to the steady state.
@@ -307,7 +314,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             case key of
               KeyChar 'q' -> do
                 CH.end
-                P.putStrLn " [dbg] NCurses finished." 
+                dbgLn " [dbg] NCurses finished." 
               KeyResize -> do           
                C.endWin
                C.update
