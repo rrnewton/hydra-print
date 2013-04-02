@@ -43,6 +43,8 @@ import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 -- import Control.Monad.State
 -- import Control.Monad.Reader
 
+import System.IO (hPutStrLn, stderr)
+
 import Control.Applicative
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as NE
@@ -69,7 +71,7 @@ data MPState =
 -- [(InputStream ByteString, WindowWidget)]
     finishedStrms :: [StreamHistory],
 
-    -- | All ative windows.  Need to be explicitly deleted.
+    -- | All active windows.  Need to be explicitly deleted.
     windows :: [CWindow]
     -- Log: TODO: could log stream create/delete events and their times.
   }
@@ -139,9 +141,9 @@ createWindows num = do
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
   forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
-    wBorder w1 defaultBorder
     wMove w1 1 1
-    wAddStr w1 ("Created: "++show tup)    
+    wAddStr w1 ("Created: "++show tup)
+    wBorder w1 defaultBorder
     wRefresh w1
     return (CWindow w1 tup)
 
@@ -158,6 +160,12 @@ createWindowWidget streamName = do -- ioStrm
         let padded = B.unpack str ++
                      P.replicate (w2i x - B.length str) ' '
         wAddStr wp padded
+        wBorder wp defaultBorder
+        -- For now refresh the window on every line written..
+        wRefresh wp
+        -- TODO: use wnoutrefresh instead
+        C.update
+        
       textSizeYX = do
         CWindow _ (y,x,_,_) <- readIORef winRef
         return (y,x)
@@ -216,7 +224,8 @@ phase1 s1name merge1 = do
     Just (NewStream (s2name,s2))     -> do
       -- Transition to the steady state.
       CH.start
-      cursesEvts <- S.nullInput
+--      cursesEvts <- S.nullInput
+      cursesEvts <- S.makeInputStream $ fmap (Just . CursesKeyEvent) C.getCh 
       
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
@@ -233,45 +242,67 @@ phase1 s1name merge1 = do
 ----------------------------------------PHASE3----------------------------------------
 -- Re-enter this loop every time there is a new stream.
 steadyState :: MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> IO ()
-steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do  
+steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do
+  -- First, deal with the new stream.
   newStrm' <- preProcess sidCnt newStrm
   merged'  <- concurrentMerge [merged, newStrm']
-  nxt      <- S.read merged'
   widg     <- createWindowWidget newName
+  let active2  = M.insert sidCnt widg activeStrms
+  windows2 <- reCreate active2 windows
 
-  let active2 = M.insert sidCnt widg activeStrms
-  reCreate active2
+  System.IO.hPutStrLn System.IO.stderr $ "ENTERING LOOP "++ show (M.size active2)
+
+  -- forkIO $ (let goo i = do System.IO.hPutStrLn System.IO.stderr $ "Blah  "++ show i
+  --                          threadDelay$ 500 * 1000
+  --                          goo (i+1)
+  --           in goo 0)
   
-  let loop mps@MPState{activeStrms, finishedStrms} = do
+  -- Second, enter an event loop:
+  let loop mps@MPState{activeStrms, finishedStrms, windows} = do
+        nxt <- S.read merged'
+--        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
         case nxt of
           Nothing -> return ()
           Just (NewStrLine sid (StrmElt ln)) -> putLine (activeStrms!sid) ln
           Just (NewStrLine sid EOS)          -> do
+            dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
             destroy (activeStrms!sid)
             let active' = M.delete sid activeStrms
-            reCreate active'
-            loop mps{activeStrms=active',
-                     finishedStrms= hist (activeStrms!sid) : finishedStrms}
+            windows' <- reCreate active' windows
+            loop mps{ activeStrms  = active',
+                      finishedStrms= hist (activeStrms!sid) : finishedStrms,
+                      windows      = windows' }
 
-          Just (NewStream (s2name,s2))       -> do            
+          Just (NewStream (s2name,s2))       -> do
+            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
             steadyState mps (sidCnt+1) (s2name,s2) merged'
           Just (CursesKeyEvent key) -> do
             case key of
+              KeyChar 'q' -> do
+                CH.end
+                P.putStrLn " [dbg] NCurses finished." 
               KeyResize -> do           
                C.endWin
                C.update
-               reCreate activeStrms
-               loop mps
-  loop state0
+               windows' <- reCreate activeStrms windows
+               loop mps{windows=windows'}
+              _ -> do dbgPrnt $ " [dbg] CURSES Key event: "++show key
+                      loop mps
+  loop state0{activeStrms=active2}
  where
-   reCreate active' = do
-      forM_ windows (\ (CWindow w _) -> delWin w)
-      ws <- createWindows (fromIntegral(M.size active'))      
+   dbgPrnt s = putLine (P.head$ M.elems activeStrms) (B.pack s)        
+   reCreate active' oldWins = do
+--      forM_ windows (\ (CWindow w _) -> delWin w)
+--      dbgPrnt$ " [dbg] Deleting windows: "
+      System.IO.hPutStrLn System.IO.stderr $ " [dbg] Deleting windows: "
+         ++show (P.map (\ (CWindow w _) -> w) oldWins)
+      ws <- createWindows (fromIntegral(M.size active'))
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
-     
+      return ws
+      
 -- Helper: import a bytestring into our system.
 preProcess :: StreamID -> InputStream ByteString -> IO (InputStream Event)
 preProcess id s = do
@@ -289,7 +320,12 @@ data Event = NewStream (String, InputStream ByteString)
            | NewStrLine {-# UNPACK #-} !StreamID (Lifted ByteString)
            | CursesKeyEvent Key
 --  deriving (Show,Eq,Read,Ord)
-           
+
+instance Show Event where
+  show (NewStream (s,_)) = "NewStream "++s
+  show (NewStrLine sid str) = "NewStrLine "++show sid++" "++show str
+  show (CursesKeyEvent k) = "CursesKeyEvent "++ show k
+
 --------------------------------------------------------------------------------
 -- Tiling behavior
 --------------------------------------------------------------------------------    
