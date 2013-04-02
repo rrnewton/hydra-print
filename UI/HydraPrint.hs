@@ -251,15 +251,14 @@ phase1 s1name merge1 = do
       dbgLn $ "Streams ended in phase1!"
       return ()
     Just (NewStrLine _ (StrmElt ln)) -> do
---      dbgLn $ "Got a line! "
       B.putStrLn ln
       phase1 s1name merge1
     Just (NewStrLine sid EOS)          -> do 
       dbgLn $ "Got stream EOS! ID "++show sid
       phase0 merge1
     Just (NewStream (s2name,s2))     -> do
-      dbgLn $ "Got newStream! "++s2name++".  Transition to steady state... (press enter)"
-      P.getLine
+      dbgLn $ "Got newStream! "++s2name++".  Transition to steady state..." -- (press enter)
+--      P.getLine
 
       -- Transition to the steady state.
       CH.start
@@ -294,21 +293,25 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
         nxt <- S.read merged'
 --        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
-        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
+--        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
         case nxt of
           Nothing -> return ()
-          Just (NewStrLine sid (StrmElt ln)) -> putLine (activeStrms!sid) ln
+          Just (NewStrLine sid (StrmElt ln)) -> do
+            putLine (activeStrms!sid) ln
+            loop mps
           Just (NewStrLine sid EOS)          -> do
-            dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
-            destroy (activeStrms!sid)
-            let active' = M.delete sid activeStrms
-            windows' <- reCreate active' windows
-            loop mps{ activeStrms  = active',
-                      finishedStrms= hist (activeStrms!sid) : finishedStrms,
-                      windows      = windows' }
+            loop mps
+
+--             dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
+-- --            destroy (activeStrms!sid)
+--             let active' = M.delete sid activeStrms
+--             windows' <- reCreate active' windows
+--             loop mps{ activeStrms  = active',
+--                       finishedStrms= hist (activeStrms!sid) : finishedStrms,
+--                       windows      = windows' }
 
           Just (NewStream (s2name,s2))       -> do
-            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
+--            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
             steadyState mps (sidCnt+1) (s2name,s2) merged'
           Just (CursesKeyEvent key) -> do
             case key of
@@ -332,6 +335,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
+      -- Actually delete the old windows:
 --     forM_ windows (\ (CWindow w _) -> delWin w)         
 #if 0
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
