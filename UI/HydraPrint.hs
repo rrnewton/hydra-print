@@ -50,7 +50,8 @@ import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 import System.IO (hFlush, hPutStrLn, stderr, openFile, IOMode(WriteMode), Handle)
 import System.IO.Unsafe (unsafePerformIO)
 import System.IO.Error (isDoesNotExistError)
-import System.Directory
+import System.Directory (removeFile)
+import System.Environment (getEnvironment)
 
 import Control.Applicative
 import qualified Data.Foldable as F
@@ -65,6 +66,16 @@ import Test.Framework.Providers.HUnit (testCase)
 import Test.Framework.Providers.QuickCheck2 (testProperty)
 import Test.Framework.TH (testGroupGenerator)
 #endif
+
+dbg :: Bool
+dbg = case P.lookup "DEBUG" theEnv of 
+        Nothing      -> False
+        Just ""      -> False
+        Just "0"     -> False
+        Just "False" -> False
+        Just  _      -> True
+
+theEnv = unsafePerformIO$ getEnvironment
 
 --------------------------------------------------------------------------------
 -- Types
@@ -149,17 +160,17 @@ createWindows names num = do
   forM (P.zip names (NE.toList panelDims)) $ 
    \ (name, tup@(hght,wid, posY, posX)) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
-    wMove w1 1 2
-    let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)
-    dbgLogLn msg
-    wAddStr w1 msg
+    let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
+    when dbg $ do dbgLogLn msg
+                  wMove w1 1 2
+                  wAddStr w1 msg
     wBorder w1 defaultBorder
     wRefresh w1
     return (CWindow w1 tup)
 
 -- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
-borderTop = 2
+borderTop = if dbg then 2 else 1
 borderBottom :: Word
 borderBottom = 1
 borderLeft :: Word
@@ -217,13 +228,14 @@ initialize = do
   return ()
 
 dbgLn :: String -> IO ()
-dbgLn s = do dbgLogLn s 
-             P.putStrLn s
+dbgLn s = when dbg$ 
+  do dbgLogLn s 
+     P.putStrLn s
 
 dbgLogLn :: String -> IO ()
-dbgLogLn s = do 
-  B.hPutStrLn dbgLog (B.pack s)
-  hFlush dbgLog
+dbgLogLn s = when dbg$ 
+ do B.hPutStrLn dbgLog (B.pack s)
+    hFlush dbgLog
   
 dbgLog :: Handle
 dbgLog = unsafePerformIO $ do
@@ -309,6 +321,8 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   let active2  = M.insert sidCnt widg activeStrms
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
+
+  -- TODO: Merge a heartbeat (timer) in here:
   
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
@@ -346,7 +360,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                       loop mps
   loop state1
  where
-   dbgPrnt s = do 
+   dbgPrnt s = when dbg $ do 
      dbgLogLn s
      putLine (P.head$ M.elems activeStrms) (B.pack s)
    reCreate active' oldWins = do

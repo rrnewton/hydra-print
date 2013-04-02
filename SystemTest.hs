@@ -15,7 +15,7 @@ import Prelude as P
 
 main :: IO ()
 main = do
-  c1 <- newIORef 0
+  c1 <- newIORef 1
   s1 <- S.makeInputStream $ do
           c <- readIORef (c1 :: IORef Int)
           threadDelay$ 2000 * 1000
@@ -31,7 +31,7 @@ main = do
     forM_ [1..3] $ \ix -> do 
       dbgLogLn "[strmsrc] Waiting before spawning additional strm..."
       threadDelay$ 3000 * 1000
-      c2 <- newIORef 0
+      c2 <- newIORef 1
       sN <- S.makeInputStream $ do
               c <- readIORef (c2 :: IORef Int)
               threadDelay$ 1000 * 1000
