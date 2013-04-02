@@ -33,6 +33,7 @@ import Data.ByteString.Char8 as B
 import Prelude as P hiding (unzip4) 
 import Control.Monad
 import Control.Concurrent
+import Control.Exception
 import System.IO.Streams as S
 import System.IO.Streams.Concurrent (concurrentMerge)
 import UI.HSCurses.CursesHelper as CH
@@ -43,7 +44,10 @@ import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
 -- import Control.Monad.State
 -- import Control.Monad.Reader
 
-import System.IO (hPutStrLn, stderr)
+import System.IO (hFlush, hPutStrLn, stderr, openFile, IOMode(WriteMode), Handle)
+import System.IO.Unsafe (unsafePerformIO)
+import System.IO.Error (isDoesNotExistError)
+import System.Directory
 
 import Control.Applicative
 import qualified Data.Foldable as F
@@ -143,7 +147,9 @@ createWindows names num = do
    \ (name, tup@(hght,wid, posY, posX)) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     wMove w1 1 2
-    wAddStr w1 ("Created: "++show tup++" name "++name)
+    let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)
+    dbgLogLn msg
+    wAddStr w1 msg
     wBorder w1 defaultBorder
     wRefresh w1
     return (CWindow w1 tup)
@@ -208,8 +214,19 @@ initialize = do
   _ <- cursSet CursorInvisible
   return ()
 
-dbgLn = P.putStrLn
-    
+dbgLn s = do dbgLogLn s 
+             P.putStrLn s
+
+dbgLogLn s = do 
+  B.hPutStrLn dbgLog (B.pack s)
+  hFlush dbgLog
+  
+dbgLog :: Handle
+dbgLog = unsafePerformIO $ do
+  let file = "/tmp/hydraprint.log"
+  removeIfExists file
+  openFile file WriteMode
+
 --------------------------------------------------------------------------------
 
 -- | Takes a /source/ of input streams, which may be added dynamically.  A stream
@@ -328,7 +345,9 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                       loop mps
   loop state1
  where
-   dbgPrnt s = putLine (P.head$ M.elems activeStrms) (B.pack s)        
+   dbgPrnt s = do 
+     dbgLogLn s
+     putLine (P.head$ M.elems activeStrms) (B.pack s)
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
       ws <- createWindows names (fromIntegral(M.size active'))
@@ -338,7 +357,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
         setWin wid win 
       -- Actually delete the old windows:
 --     forM_ windows (\ (CWindow w _) -> delWin w)         
-#if 0
+#if 1
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
 #else
@@ -546,3 +565,9 @@ case_lift = do
   assertEqual "eq" [StrmElt 1,StrmElt 2,StrmElt 3,StrmElt 4,EOS] y 
 
 #endif
+
+removeIfExists :: FilePath -> IO ()
+removeIfExists fileName = removeFile fileName `catch` handleExists
+  where handleExists e
+          | isDoesNotExistError e = return ()
+          | otherwise = throwIO e
