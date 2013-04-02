@@ -134,60 +134,68 @@ data CWindow = CWindow C.Window WinPos
 
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: Word -> IO [CWindow]
-createWindows num = do
+createWindows :: [String] -> Word -> IO [CWindow]
+createWindows names num = do
   (curY,curX) <- scrSize
   let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
-  forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
+  forM (P.zip names (NE.toList panelDims)) $ 
+   \ (name, tup@(hght,wid, posY, posX)) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     wMove w1 1 2
-    wAddStr w1 ("Created: "++show tup)
+    wAddStr w1 ("Created: "++show tup++" name "++name)
     wBorder w1 defaultBorder
     wRefresh w1
     return (CWindow w1 tup)
 
 -- How much of the top/bottom of a window to avoid for the border
 borderTop :: Word
-borderTop = 1
+borderTop = 2
 borderBottom :: Word
--- borderBottom = 1
 borderBottom = 1
+
+borderLeft :: Word
+borderLeft = 1
+borderRight :: Word
+borderRight = 1
 
 -- | Create a new, persistent scrolling text widget.
 createWindowWidget :: String -> IO WindowWidget
 createWindowWidget streamName = do -- ioStrm
   revHist <- newIORef []
-  winRef  <- newIORef (error "winRef field uninialized")
+  winRef  <- newIORef (error "winRef field uninialized.  Call setWin.")
   let hist = StreamHistory{streamName, revHist}
       putLine bstr = do
         CWindow wp (y,x,_,_) <- readIORef winRef
         oldhist <- readIORef revHist
-        let msg     = bstr `B.append` (B.pack (" line "++show (P.length oldhist)++" y "++show y))
+        let msg     = bstr `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
         let newhist = msg : oldhist
         writeIORef revHist newhist    
         let y'    = y - borderTop - borderBottom
             shown = P.take (w2i y') newhist
             padY  = y' - i2w(P.length shown)
         forM_ (P.zip [1..] shown) $ \ (ind,oneline) -> do
-          wMove wp (w2i (y - borderBottom - ind - padY)) 1
+          wMove wp (w2i (y - borderBottom - ind - padY)) (w2i borderLeft)
           let padded = oneline `B.append`
                        B.replicate (w2i x - B.length oneline) ' '
-          wAddStr wp (B.unpack padded)
+              cropped = B.take (w2i (x - borderLeft - borderRight)) padded
+          wAddStr wp (B.unpack cropped)
         wBorder wp defaultBorder
         -- For now refresh the window on every line written..
-        wRefresh wp
-        -- TODO: use wnoutrefresh instead
-        C.update
+        wRefresh wp -- TODO: use wnoutrefresh instead
+        -- TODO: Do we need to refresh all the OTHER windows to avoid problems!?
+--        C.update
         
       textSizeYX = do
         CWindow _ (y,x,_,_) <- readIORef winRef
         return (y,x)
       destroy = error "implement destroy"
 
-      setWin cwin@(CWindow w _) = do
+      setWin cwin@(CWindow wp _) = do
         writeIORef winRef cwin
---        wRefresh w
+        -- wBorder wp defaultBorder
+        -- wRefresh wp  -- TODO: use wnoutrefresh instead
+        -- C.update
         return ()
       
       obj = WindowWidget { hist, textSizeYX, putLine,
@@ -232,10 +240,20 @@ phase1 :: String -> InputStream Event -> IO ()
 phase1 s1name merge1 = do 
   nxt <- S.read merge1
   case nxt of
-    Nothing                          -> return ()
-    Just (NewStrLine _ (StrmElt ln)) -> B.putStrLn ln >> phase1 s1name merge1
-    Just (NewStrLine _ EOS)          -> phase0 merge1
+    Nothing                          -> do
+      P.putStrLn $ "Streams ended in phase1!"
+      return ()
+    Just (NewStrLine _ (StrmElt ln)) -> do
+      P.putStrLn $ "Got a line! "
+      B.putStrLn ln
+      phase1 s1name merge1
+    Just (NewStrLine sid EOS)          -> do 
+      P.putStrLn $ "Got stream EOS! ID "++show sid
+      phase0 merge1
     Just (NewStream (s2name,s2))     -> do
+      P.putStrLn $ "Got newStream! "++s2name++".  Transition to steady state... (press enter)"
+      P.getLine
+
       -- Transition to the steady state.
       CH.start
 --      cursesEvts <- S.nullInput
@@ -245,7 +263,7 @@ phase1 s1name merge1 = do
       -- being read into Haskell, irrespective of what this "main" thread does.     
       merge2 <- concurrentMerge [merge1, cursesEvts]
       wid0   <- createWindowWidget s1name
-      [win0] <- createWindows 1
+      [win0] <- createWindows [s1name] 1
       setWin wid0 win0
       let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
                              finishedStrms= [],
@@ -265,16 +283,11 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
   
---  System.IO.hPutStrLn System.IO.stderr $ "ENTERING LOOP "++ show (M.size active2)
-  -- forkIO $ (let goo i = do System.IO.hPutStrLn System.IO.stderr $ "Blah  "++ show i
-  --                          threadDelay$ 500 * 1000
-  --                          goo (i+1)
-  --           in goo 0)
-  
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
         nxt <- S.read merged'
 --        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
+        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
         case nxt of
           Nothing -> return ()
           Just (NewStrLine sid (StrmElt ln)) -> putLine (activeStrms!sid) ln
@@ -306,13 +319,21 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
  where
    dbgPrnt s = putLine (P.head$ M.elems activeStrms) (B.pack s)        
    reCreate active' oldWins = do
-      dbgPrnt$ " [dbg] Deleting windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
-      forM_ windows (\ (CWindow w _) -> delWin w)         
-      ws <- createWindows (fromIntegral(M.size active'))
+      let names = P.map (streamName . hist) $ M.elems active'
+      ws <- createWindows names (fromIntegral(M.size active'))
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
+--     forM_ windows (\ (CWindow w _) -> delWin w)         
+#if 0
+      dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
+               ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
+#else
+      forM_ (M.elems active') $ \ ww -> 
+        putLine ww (B.pack (" [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
+                            ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)))
+#endif
       return ws
       
 -- Helper: import a bytestring into our system.
