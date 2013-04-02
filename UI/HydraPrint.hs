@@ -141,11 +141,18 @@ createWindows num = do
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
   forM (NE.toList panelDims) $ \ tup@(hght,wid, posY, posX) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
-    wMove w1 1 1
+    wMove w1 1 2
     wAddStr w1 ("Created: "++show tup)
     wBorder w1 defaultBorder
     wRefresh w1
     return (CWindow w1 tup)
+
+-- How much of the top/bottom of a window to avoid for the border
+borderTop :: Word
+borderTop = 1
+borderBottom :: Word
+-- borderBottom = 1
+borderBottom = 1
 
 -- | Create a new, persistent scrolling text widget.
 createWindowWidget :: String -> IO WindowWidget
@@ -153,13 +160,20 @@ createWindowWidget streamName = do -- ioStrm
   revHist <- newIORef []
   winRef  <- newIORef (error "winRef field uninialized")
   let hist = StreamHistory{streamName, revHist}
-      putLine str = do
+      putLine bstr = do
         CWindow wp (y,x,_,_) <- readIORef winRef
-        modifyIORef revHist (str:)
-        wMove wp 3 1
-        let padded = B.unpack str ++
-                     P.replicate (w2i x - B.length str) ' '
-        wAddStr wp padded
+        oldhist <- readIORef revHist
+        let msg     = bstr `B.append` (B.pack (" line "++show (P.length oldhist)++" y "++show y))
+        let newhist = msg : oldhist
+        writeIORef revHist newhist    
+        let y'    = y - borderTop - borderBottom
+            shown = P.take (w2i y') newhist
+            padY  = y' - i2w(P.length shown)
+        forM_ (P.zip [1..] shown) $ \ (ind,oneline) -> do
+          wMove wp (w2i (y - borderBottom - ind - padY)) 1
+          let padded = oneline `B.append`
+                       B.replicate (w2i x - B.length oneline) ' '
+          wAddStr wp (B.unpack padded)
         wBorder wp defaultBorder
         -- For now refresh the window on every line written..
         wRefresh wp
@@ -249,9 +263,9 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   widg     <- createWindowWidget newName
   let active2  = M.insert sidCnt widg activeStrms
   windows2 <- reCreate active2 windows
-
-  System.IO.hPutStrLn System.IO.stderr $ "ENTERING LOOP "++ show (M.size active2)
-
+  let state1 = state0{activeStrms=active2, windows=windows2}
+  
+--  System.IO.hPutStrLn System.IO.stderr $ "ENTERING LOOP "++ show (M.size active2)
   -- forkIO $ (let goo i = do System.IO.hPutStrLn System.IO.stderr $ "Blah  "++ show i
   --                          threadDelay$ 500 * 1000
   --                          goo (i+1)
@@ -288,14 +302,12 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                loop mps{windows=windows'}
               _ -> do dbgPrnt $ " [dbg] CURSES Key event: "++show key
                       loop mps
-  loop state0{activeStrms=active2}
+  loop state1
  where
    dbgPrnt s = putLine (P.head$ M.elems activeStrms) (B.pack s)        
    reCreate active' oldWins = do
---      forM_ windows (\ (CWindow w _) -> delWin w)
---      dbgPrnt$ " [dbg] Deleting windows: "
-      System.IO.hPutStrLn System.IO.stderr $ " [dbg] Deleting windows: "
-         ++show (P.map (\ (CWindow w _) -> w) oldWins)
+      dbgPrnt$ " [dbg] Deleting windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
+      forM_ windows (\ (CWindow w _) -> delWin w)         
       ws <- createWindows (fromIntegral(M.size active'))
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
