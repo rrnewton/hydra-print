@@ -154,12 +154,11 @@ createWindows names num = do
     wRefresh w1
     return (CWindow w1 tup)
 
--- How much of the top/bottom of a window to avoid for the border
+-- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
 borderTop = 2
 borderBottom :: Word
 borderBottom = 1
-
 borderLeft :: Word
 borderLeft = 1
 borderRight :: Word
@@ -356,15 +355,9 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
       -- Actually delete the old windows:
---     forM_ windows (\ (CWindow w _) -> delWin w)         
-#if 1
+      forM_ oldWins (\ (CWindow w _) -> delWin w)
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
-#else
-      forM_ (M.elems active') $ \ ww -> 
-        putLine ww (B.pack (" [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
-                            ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)))
-#endif
       return ws
       
 -- Helper: import a bytestring into our system.
