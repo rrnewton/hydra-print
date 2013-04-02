@@ -22,6 +22,9 @@ module UI.HydraPrint
          -- * Testing
          , testSuite
 #endif         
+
+         -- TEMPORARY:
+         , dbgLogLn
        )
        where
 
@@ -213,9 +216,11 @@ initialize = do
   _ <- cursSet CursorInvisible
   return ()
 
+dbgLn :: String -> IO ()
 dbgLn s = do dbgLogLn s 
              P.putStrLn s
 
+dbgLogLn :: String -> IO ()
 dbgLogLn s = do 
   B.hPutStrLn dbgLog (B.pack s)
   hFlush dbgLog
@@ -313,10 +318,10 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
         case nxt of
           Nothing -> return ()
           Just (NewStrLine sid (StrmElt ln)) -> do
+            dbgLogLn (B.unpack ln)
             putLine (activeStrms!sid) ln
             loop mps
           Just (NewStrLine sid EOS)          -> do
-#if 1
             dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
 --            destroy (activeStrms!sid)
             let active' = M.delete sid activeStrms
@@ -324,9 +329,6 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             loop mps{ activeStrms  = active',
                       finishedStrms= hist (activeStrms!sid) : finishedStrms,
                       windows      = windows' }
-#else
-            loop mps
-#endif
           Just (NewStream (s2name,s2))       -> do
 --            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
             steadyState mps (sidCnt+1) (s2name,s2) merged'
