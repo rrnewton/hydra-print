@@ -25,7 +25,9 @@ main = do
           c <- readIORef (c2 :: IORef Int)
           threadDelay$ 1000 * 1000
           writeIORef c2 (c+1)
-          return$ Just$ B.pack$ show (10 * c) ++"\n"
+          if c >= 5 
+           then return Nothing
+           else return$ Just$ B.pack$ show (10 * c) ++"\n"
   src <- S.fromList [("s1",s1),("s2",s2)]
 --  src <- S.fromList [("s2",s2)]
 --  src <- S.fromList [("s2",s2),("s1",s1)]

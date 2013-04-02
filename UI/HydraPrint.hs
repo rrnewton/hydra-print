@@ -300,16 +300,17 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             putLine (activeStrms!sid) ln
             loop mps
           Just (NewStrLine sid EOS)          -> do
+#if 1
+            dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
+--            destroy (activeStrms!sid)
+            let active' = M.delete sid activeStrms
+            windows' <- reCreate active' windows
+            loop mps{ activeStrms  = active',
+                      finishedStrms= hist (activeStrms!sid) : finishedStrms,
+                      windows      = windows' }
+#else
             loop mps
-
---             dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
--- --            destroy (activeStrms!sid)
---             let active' = M.delete sid activeStrms
---             windows' <- reCreate active' windows
---             loop mps{ activeStrms  = active',
---                       finishedStrms= hist (activeStrms!sid) : finishedStrms,
---                       windows      = windows' }
-
+#endif
           Just (NewStream (s2name,s2))       -> do
 --            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
             steadyState mps (sidCnt+1) (s2name,s2) merged'
