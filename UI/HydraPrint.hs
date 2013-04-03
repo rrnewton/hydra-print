@@ -163,6 +163,10 @@ createWindows names num = do
   ws <- forM (P.zip names (NE.toList panelDims)) $ 
    \ (name, tup@(hght,wid, posY, posX)) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
+
+    (attr, pr) <- wAttrGet w1
+    wAttrSet w1 (setBold attr True, pr)
+    
     let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
     when dbg $ do dbgLogLn msg
                   wMove w1 1 2
@@ -380,7 +384,7 @@ phase1 s1name merge1 = do
       -- Some settings:
       _ <- leaveOk True
       _ <- cursSet CursorInvisible
-      -- startColor
+      startColor
 
       cursesEvts <- S.makeInputStream $ fmap (Just . CursesKeyEvent) C.getCh 
       
@@ -474,11 +478,9 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       forM_ oldWins (\ (CWindow w _) -> delWin w)
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
---      erase; refresh
       ----------------------------------------
       -- Erase the bit of border which may be unused:
       (nLines,nCols) <- scrSize
-      -- let CWindow wp (hght,wid,y,x) = P.last ws
       dummies <- case P.last ws of
         CWindow wp (hght,wid,y,x) ->
           let lastCol = w2i$ x + wid - 1  in
