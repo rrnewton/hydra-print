@@ -13,12 +13,15 @@ import Data.ByteString.Char8 as B
 import Data.IORef
 import Prelude as P
 
+-- baseStrmRate = 1000 -- Seconds
+baseStrmRate = 100 -- Seconds
+
 main :: IO ()
 main = do
   c1 <- newIORef 1
   s1 <- S.makeInputStream $ do
           c <- readIORef (c1 :: IORef Int)
-          threadDelay$ 2000 * 1000
+          threadDelay$ 2000 * baseStrmRate
           writeIORef c1 (c+1)
           return$ Just$ B.pack$ show (100 * c) ++"\n"
    
@@ -28,15 +31,15 @@ main = do
   -- Add a new stream every 3 seconds, they each expire after 5.
   ----------------------------------------
   forkIO $ do 
-    forM_ [1..3] $ \ix -> do 
+    forM_ [1.. 3] $ \ix -> do 
       dbgLogLn "[strmsrc] Waiting before spawning additional strm..."
       threadDelay$ 3000 * 1000
       c2 <- newIORef 1
       sN <- S.makeInputStream $ do
               c <- readIORef (c2 :: IORef Int)
-              threadDelay$ 1000 * 1000
+              threadDelay$ 1000 * baseStrmRate
               writeIORef c2 (c+1)
-              if c >= 5 
+              if c >= 8000 `quot` baseStrmRate
                then return Nothing
                else return$ Just$ B.pack$ show ix ++":"++ show (10 * c) ++"\n" 
       dbgLogLn$"[strmsrc] Spawning additional stream! "++show ix

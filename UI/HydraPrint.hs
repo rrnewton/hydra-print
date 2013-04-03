@@ -164,9 +164,18 @@ createWindows names num = do
     when dbg $ do dbgLogLn msg
                   wMove w1 1 2
                   wAddStr w1 msg
-    wBorder w1 defaultBorder
-    wRefresh w1
+--    wBorder w1 defaultBorder
+--    wRefresh w1
     return (CWindow w1 tup)
+
+-- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
+-- otherwise.
+redrawAll :: [CWindow] -> IO ()
+redrawAll wins = do
+  forM_ wins $ \ (CWindow wp _) -> do
+    wBorder  wp defaultBorder
+    wRefresh wp     -- TODO: use wnoutrefresh instead
+  C.update
 
 -- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
@@ -199,9 +208,9 @@ createWindowWidget streamName = do -- ioStrm
                        B.replicate (w2i x - B.length oneline) ' '
               cropped = B.take (w2i (x - borderLeft - borderRight)) padded
           wAddStr wp (B.unpack cropped)
-        wBorder wp defaultBorder
+--        wBorder wp defaultBorder
         -- For now refresh the window on every line written..
-        wRefresh wp -- TODO: use wnoutrefresh instead
+--        wRefresh wp -- TODO: use wnoutrefresh instead
         -- TODO: Do we need to refresh all the OTHER windows to avoid problems!?
 --        C.update
         
@@ -307,6 +316,7 @@ phase1 s1name merge1 = do
       let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
                              finishedStrms= [],
                              windows= [win0] }
+      redrawAll [win0]
       steadyState initSt 1 (s2name,s2) merge2
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
@@ -326,6 +336,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
+        redrawAll windows 
         nxt <- S.read merged'
 --        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
 --        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
@@ -355,6 +366,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                C.endWin
                C.update
                windows' <- reCreate activeStrms windows
+--               redrawAll windows'
                loop mps{windows=windows'}
               _ -> do dbgPrnt $ " [dbg] CURSES Key event: "++show key
                       loop mps
@@ -363,6 +375,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
    dbgPrnt s = when dbg $ do 
      dbgLogLn s
      putLine (P.head$ M.elems activeStrms) (B.pack s)
+     redrawAll windows     
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
       ws <- createWindows names (fromIntegral(M.size active'))
