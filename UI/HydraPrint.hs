@@ -218,17 +218,26 @@ clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do
   io$ evaluate hght
   io$ evaluate wid
   io$ evaluate wp
-  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind ->    
-    return ()
---  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
---    moveCursor (w2i yind) (w2i borderLeft)
---    drawString blank
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do 
+    moveCursor (w2i yind) (w2i borderLeft)
+    drawString blank
 --    drawString "!"
 --    return ()
 --    blit wp blank
---  writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
+    writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
 --  wnoutRefresh wp  
 #endif
+
+-- | Write out a string that goes all the way to the bottom/right corner.
+writeToCorner :: Int -> Int -> String -> Update ()
+writeToCorner y x str = do
+  let len = P.length str
+  moveCursor  (fromIntegral y) (fromIntegral x)
+  drawString  (P.init str)
+  -- Uh oh!  'ncurses' doesn't expose winsch either.  SKIP IT for now:  
+--  moveCursor  y (len-1)
+--  throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord$ P.last str)
+  return ()
 
 
 {-
@@ -531,14 +540,14 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
             let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX)
             -- wclear dummy; wnoutRefresh dummy
-            clearWindow dummyCW
+            -- clearWindow dummyCW
             ----------- Then the vertical right border:
             let startY     = (w2i$ y+1)
                 remainingY = fromIntegral$ nLines - startY - 1
             dummy2 <- newWindow remainingY 1 startY (nCols-1)
             let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1))
             -- wclear dummy2; wnoutRefresh dummy2
-            clearWindow dummy2CW
+            -- clearWindow dummy2CW
             return [dummy,dummy2]
            else return []
       return ws
