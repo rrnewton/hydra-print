@@ -12,14 +12,20 @@ import Control.Monad (forM_)
 import Data.ByteString.Char8 as B
 import Data.IORef
 import Prelude as P
+import System.Environment (getArgs)
 
 --baseStrmRate = 1000 -- Seconds
 -- baseStrmRate = 500
-baseStrmRate = 100 
-
+-- baseStrmRate = 100 
 
 main :: IO ()
 main = do
+  args <- getArgs
+  let baseStrmRate =
+        case args of
+          [b] -> read b
+          _   -> 100
+  
   c1 <- newIORef 1
   s1 <- S.makeInputStream $ do
           c <- readIORef (c1 :: IORef Int)

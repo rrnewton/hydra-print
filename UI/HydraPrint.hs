@@ -170,15 +170,20 @@ createWindows names num = do
     return cwin  
   return (ws,nX,nY)
   
--- | Use the simple method of writing blanks to all (non-border) positions.
+-- | Use the simple method of writing blanks to clear.  Convention: overwrite the
+--   lower & right borders, but not the top/left.
 clearWindow :: CWindow -> IO ()
 clearWindow (CWindow wp (hght,wid,_,_)) = do 
-  let width' = wid - borderLeft - borderRight
-      blank  = P.replicate (w2i width') ' '
-  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do
---  forM_ [1 .. hght - borderBottom] $ \ yind -> do       
+  let width' = wid - borderLeft -- - borderRight
+      blank  = P.replicate (w2i width') '.'
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
+--  forM_ [borderTop .. hght - 1] $ \ yind -> do
+--  forM_ [hght - 1 .. hght - 1] $ \ yind -> do          
     wMove wp (w2i yind) (w2i borderLeft)
     wAddStr wp blank
+  -- I'm getting a Curses error if I try to write the lower-right corner character!?
+  wMove wp (w2i$ hght-1) (w2i borderLeft)
+  wAddStr wp (P.init blank)
   wnoutRefresh wp  
 
 -- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
@@ -409,7 +414,8 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
      redrawAll windows     
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
-      (ws,_,_) <- createWindows names (fromIntegral(M.size active'))
+          numactive = fromIntegral (M.size active')
+      (ws,numHoriz,numVert) <- createWindows names numactive
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
@@ -418,6 +424,14 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       forM_ oldWins (\ (CWindow w _) -> delWin w)
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
+      -- Erase the bit of border which may be unused:
+      (_,nCols) <- scrSize
+      -- let CWindow wp (hght,wid,y,x) = P.last ws
+      case P.last ws of
+        CWindow wp (hght,wid,y,x) -> 
+          when (wid + x < i2w nCols) $ do
+--            refresh
+            return ()
       return ws
       
 -- Helper: import a bytestring into our system.
