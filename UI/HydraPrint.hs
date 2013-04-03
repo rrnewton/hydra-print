@@ -165,6 +165,9 @@ createWindows names num = do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
 
     (attr, pr) <- wAttrGet w1
+    let Just mg   = color "magenta"
+        Just blck = color "black"
+    initPair pr mg blck
     wAttrSet w1 (setBold attr True, pr)
     
     let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
