@@ -174,7 +174,8 @@ clearWindow :: CWindow -> IO ()
 clearWindow (CWindow wp (hght,wid,_,_)) = do 
   let width' = wid - borderLeft - borderRight
       blank  = P.replicate (w2i width') ' '
-  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do 
+--  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do
+  forM_ [1 .. hght - borderBottom] $ \ yind -> do       
     wMove wp (w2i yind) (w2i borderLeft)
     wAddStr wp blank
   wnoutRefresh wp  
@@ -191,7 +192,8 @@ redrawAll wins = do
 
 -- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
-borderTop = if dbg then 2 else 1
+-- borderTop = if dbg then 2 else 1
+borderTop = 2 
 borderBottom :: Word
 borderBottom = 1
 borderLeft :: Word
@@ -244,12 +246,14 @@ createWindowWidget streamName = do -- ioStrm
   return obj
 
 drawBorder :: String -> CWindow -> IO ()
-drawBorder name (CWindow wp (hght,wid,_,_)) = do
+drawBorder name (CWindow wp (_,wid,_,_)) = do
   wBorder wp defaultBorder
-  let mid = wid `quot` 2
-      start = w2i mid - (P.length name `quot` 2)
-  wMove   wp 0 start
-  wAddStr wp name
+  let -- name' = llCorner : name ++ [lrCorner]
+      name' = "[" ++ name ++ "]"
+      mid  = wid `quot` 2
+      strt = w2i mid - (P.length name' `quot` 2)
+  wMove   wp 1 strt
+  wAddStr wp name'
 
 dbgLn :: String -> IO ()
 dbgLn s = when dbg$ 
