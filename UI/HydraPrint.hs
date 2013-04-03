@@ -202,10 +202,27 @@ clearWindow (CWindow wp (hght,wid,_,_)) = do
   wnoutRefresh wp  
 -}
 
+-- Nah, this won't do it... odd that there's no clear or fill function?
+
+#if 1 
 clearWindow :: CWindow -> Curses ()
 clearWindow (CWindow wp _) = do
   updateWindow wp $ 
     setBackground (Glyph ' ' [])
+#else
+clearWindow :: CWindow -> Curses ()
+clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do  
+  let 
+      width' = wid - borderLeft -- - borderRight
+      blank  = P.replicate (w2i width') blankChar
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
+--    moveCursor (w2i yind) (w2i borderLeft)
+--    drawString blank
+    return ()
+--    blit wp blank
+--  writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
+--  wnoutRefresh wp  
+#endif
 
 
 {-
@@ -504,16 +521,18 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
           if (lastCol < nCols - 1) then do
             ----------- First wipe the horizontal lower border:
             let startX     = lastCol+1
-                remainingX = nCols - startX 
+                remainingX = fromIntegral$ nCols - startX 
             dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
+            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX)
             -- wclear dummy; wnoutRefresh dummy
-            clearWindow (CWindow dummy (error "Don't need this for now."))
+            clearWindow dummyCW
             ----------- Then the vertical right border:
-            let startY = (w2i$ y+1)
-                remainingY = nLines - startY - 1
+            let startY     = (w2i$ y+1)
+                remainingY = fromIntegral$ nLines - startY - 1
             dummy2 <- newWindow remainingY 1 startY (nCols-1)
+            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1))
             -- wclear dummy2; wnoutRefresh dummy2
-            clearWindow (CWindow dummy2 (error "Don't need this for now."))
+            clearWindow dummy2CW
             return [dummy,dummy2]
            else return []
       return ws
