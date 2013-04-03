@@ -204,21 +204,27 @@ clearWindow (CWindow wp (hght,wid,_,_)) = do
 
 -- Nah, this won't do it... odd that there's no clear or fill function?
 
-#if 1 
+#if 0
 clearWindow :: CWindow -> Curses ()
 clearWindow (CWindow wp _) = do
   updateWindow wp $ 
     setBackground (Glyph ' ' [])
 #else
 clearWindow :: CWindow -> Curses ()
-clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do  
+clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do
   let 
       width' = wid - borderLeft -- - borderRight
       blank  = P.replicate (w2i width') blankChar
-  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
+  io$ evaluate hght
+  io$ evaluate wid
+  io$ evaluate wp
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind ->    
+    return ()
+--  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
 --    moveCursor (w2i yind) (w2i borderLeft)
 --    drawString blank
-    return ()
+--    drawString "!"
+--    return ()
 --    blit wp blank
 --  writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
 --  wnoutRefresh wp  
