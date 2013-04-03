@@ -155,7 +155,8 @@ data StreamHistory =
 type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
-data CWindow = CWindow C.Window WinPos 
+data CWindow = CWindow C.Window WinPos
+  deriving Show
 
 --------------------------------------------------------------------------------
 
@@ -218,13 +219,12 @@ clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do
   io$ evaluate hght
   io$ evaluate wid
   io$ evaluate wp
-  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do 
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
     moveCursor (w2i yind) (w2i borderLeft)
     drawString blank
 --    drawString "!"
---    return ()
---    blit wp blank
-    writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
+    return ()
+  writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
 --  wnoutRefresh wp  
 #endif
 
@@ -463,8 +463,6 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
         redrawAll windows
         nxt <- io$ S.read merged'
---        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
---        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
         case nxt of
           Nothing -> return ()
           Just (NewStrLine sid (StrmElt ln)) -> do
@@ -485,7 +483,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                       finishedStrms= hist (activeStrms!sid) : finishedStrms,
                       windows      = windows' }
           Just (NewStream (s2name,s2))       -> do
---            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
+            io$ dbgPrnt $ " [dbg] NEW stream: "++ show s2name
             steadyState mps (sidCnt+1) (s2name,s2) merged'
           Just (CursesKeyEvent key) -> do
             case key of
@@ -540,14 +538,16 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
             let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX)
             -- wclear dummy; wnoutRefresh dummy
-            -- clearWindow dummyCW
+            io$ dbgPrnt$ "Dummy horiz (screen "++show (nLines,nCols)++"): "++show dummyCW
+--            clearWindow dummyCW
             ----------- Then the vertical right border:
             let startY     = (w2i$ y+1)
                 remainingY = fromIntegral$ nLines - startY - 1
             dummy2 <- newWindow remainingY 1 startY (nCols-1)
             let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1))
+            io$ dbgPrnt$ "Dummy vert: "++show dummy2CW
             -- wclear dummy2; wnoutRefresh dummy2
-            -- clearWindow dummy2CW
+--            clearWindow dummy2CW
             return [dummy,dummy2]
            else return []
       return ws
