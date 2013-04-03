@@ -152,12 +152,12 @@ data CWindow = CWindow C.Window WinPos
 
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: [String] -> Word -> IO [CWindow]
+createWindows :: [String] -> Word -> IO ([CWindow],Word,Word)
 createWindows names num = do
   (curY,curX) <- scrSize
   let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
-  forM (P.zip names (NE.toList panelDims)) $ 
+  ws <- forM (P.zip names (NE.toList panelDims)) $ 
    \ (name, tup@(hght,wid, posY, posX)) -> do
     w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
     let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
@@ -167,15 +167,16 @@ createWindows names num = do
     let cwin = CWindow w1 tup  
     drawBorder name cwin
     wnoutRefresh w1
-    return cwin
-
+    return cwin  
+  return (ws,nX,nY)
+  
 -- | Use the simple method of writing blanks to all (non-border) positions.
 clearWindow :: CWindow -> IO ()
 clearWindow (CWindow wp (hght,wid,_,_)) = do 
   let width' = wid - borderLeft - borderRight
       blank  = P.replicate (w2i width') ' '
---  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do
-  forM_ [1 .. hght - borderBottom] $ \ yind -> do       
+  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do
+--  forM_ [1 .. hght - borderBottom] $ \ yind -> do       
     wMove wp (w2i yind) (w2i borderLeft)
     wAddStr wp blank
   wnoutRefresh wp  
@@ -192,8 +193,8 @@ redrawAll wins = do
 
 -- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
--- borderTop = if dbg then 2 else 1
-borderTop = 2 
+borderTop = if dbg then 2 else 1
+-- borderTop = 2 
 borderBottom :: Word
 borderBottom = 1
 borderLeft :: Word
@@ -246,13 +247,17 @@ createWindowWidget streamName = do -- ioStrm
   return obj
 
 drawBorder :: String -> CWindow -> IO ()
-drawBorder name (CWindow wp (_,wid,_,_)) = do
-  wBorder wp defaultBorder
-  let -- name' = llCorner : name ++ [lrCorner]
+drawBorder name (CWindow wp (hght,wid,y,_)) = do
+  wBorder wp defaultBorder    
+  let isTop = (y == 0)
+      -- name' = llCorner : name ++ [lrCorner]
       name' = "[" ++ name ++ "]"
       mid  = wid `quot` 2
       strt = w2i mid - (P.length name' `quot` 2)
-  wMove   wp 1 strt
+  if isTop then
+     wMove   wp 0 strt
+   else
+     wMove   wp (w2i$ hght-1) strt
   wAddStr wp name'
 
 dbgLn :: String -> IO ()
@@ -332,7 +337,7 @@ phase1 s1name merge1 = do
       -- being read into Haskell, irrespective of what this "main" thread does.     
       merge2 <- concurrentMerge [merge1, cursesEvts]
       wid0   <- createWindowWidget s1name
-      [win0] <- createWindows [s1name] 1
+      ([win0],_,_) <- createWindows [s1name] 1
       setWin wid0 win0
       let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
                              finishedStrms= [],
@@ -404,7 +409,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
      redrawAll windows     
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
-      ws <- createWindows names (fromIntegral(M.size active'))
+      (ws,_,_) <- createWindows names (fromIntegral(M.size active'))
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
