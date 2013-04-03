@@ -34,6 +34,7 @@ import Data.Char (ord)
 import Data.Map  as M
 import Data.List as L 
 import Data.ByteString.Char8 as B
+import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P hiding (unzip4) 
 import Control.Monad
 import Control.Concurrent
@@ -210,6 +211,13 @@ blit wp s =
   -- Ignore all non-ascii at the moment:
   withCAStringLen s $ \ (s',len) -> 
     throwIfErr_ "waddchnstr" $ waddchnstr wp s' (fromIntegral len)
+
+blitB :: Window -> ByteString -> IO ()
+blitB wp s =
+  -- Ignore all non-ascii at the moment:
+--  B.useAsCStringLen s $ \ (s',len) ->
+  unsafeUseAsCStringLen s $ \ (s',len) ->
+    throwIfErr_ "waddchnstr" $ waddchnstr wp s' (fromIntegral len)
   
 -- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
 -- otherwise.
@@ -253,7 +261,8 @@ createWindowWidget streamName = do -- ioStrm
                        B.replicate (w2i x - B.length oneline) ' '
               cropped = B.take (w2i (x - borderLeft - borderRight)) padded
           wAddStr wp (B.unpack cropped)
-          ------ Line is put, update ----
+--          blitB wp cropped
+          ------ Line is put! ----
           drawBorder streamName cwin
           -- For now refresh the window on every line written..
           wnoutRefresh wp
@@ -454,12 +463,20 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
       -- Erase the bit of border which may be unused:
-      (_,nCols) <- scrSize
+      (nLines,nCols) <- scrSize
       -- let CWindow wp (hght,wid,y,x) = P.last ws
       case P.last ws of
-        CWindow wp (hght,wid,y,x) -> 
-          when (wid + x < i2w nCols) $ do
---            refresh
+        CWindow wp (hght,wid,y,x) ->
+          let lastCol = w2i$ x + wid - 1  in
+          when (lastCol < nCols - 1) $ do
+            putLine (P.head$ M.elems activeStrms) (B.pack$ "SCREEN SIZE "++ show (nLines,nCols))
+            putLine (P.head$ M.elems activeStrms) (B.pack$ "LAST WIN AT "++ show (hght,wid,y,x))
+            putLine (P.head$ M.elems activeStrms) (B.pack$ "MOVE TO "++ show ((w2i$ y+hght-1),lastCol))
+            move (w2i$ y+hght-1) lastCol
+--            wInsCh stdScr ':'
+            wAddStr stdScr "HHH"
+            wRefresh stdScr
+--            wAddStr stdScr (P.replicate (nCols - lastCol) 'H')            
             return ()
       return ws
       
