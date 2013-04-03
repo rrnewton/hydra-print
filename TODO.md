@@ -12,6 +12,10 @@ issues at some point.
  * Rather than always having a dense packing of tiles (deleting the
    last window), allow "gaps" in the middle, to avoid unnecessary
    shifting.
+
+ * Could implement scroll-wheel scrolling within the panels.... but
+   that might be a bridge too far, may be better to just do a tmux
+   backend.
  
 BUGS
 ---- 

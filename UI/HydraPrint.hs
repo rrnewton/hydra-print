@@ -164,9 +164,10 @@ createWindows names num = do
     when dbg $ do dbgLogLn msg
                   wMove w1 1 2
                   wAddStr w1 msg
-    wBorder w1 defaultBorder
+    let cwin = CWindow w1 tup  
+    drawBorder name cwin
     wnoutRefresh w1
-    return (CWindow w1 tup)
+    return cwin
 
 -- | Use the simple method of writing blanks to all (non-border) positions.
 clearWindow :: CWindow -> IO ()
@@ -205,7 +206,7 @@ createWindowWidget streamName = do -- ioStrm
   winRef  <- newIORef (error "winRef field uninialized.  Call setWin.")
   let hist = StreamHistory{streamName, revHist}
       putLine bstr = do
-        CWindow wp (y,x,_,_) <- readIORef winRef
+        cwin@(CWindow wp (y,x,_,_)) <- readIORef winRef
         oldhist <- readIORef revHist
         let msg     = bstr `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
         let newhist = msg : oldhist
@@ -220,7 +221,7 @@ createWindowWidget streamName = do -- ioStrm
               cropped = B.take (w2i (x - borderLeft - borderRight)) padded
           wAddStr wp (B.unpack cropped)
           ------ Line is put, update ----
-          wBorder wp defaultBorder
+          drawBorder streamName cwin
           -- For now refresh the window on every line written..
           wnoutRefresh wp
         -- TODO: Do we need to refresh all the OTHER windows to avoid problems!?
@@ -233,7 +234,7 @@ createWindowWidget streamName = do -- ioStrm
 
       setWin cwin@(CWindow wp _) = do
         writeIORef winRef cwin
-        wBorder wp defaultBorder
+        drawBorder streamName cwin
         wnoutRefresh wp
         -- C.update
         return ()
@@ -241,6 +242,14 @@ createWindowWidget streamName = do -- ioStrm
       obj = WindowWidget { hist, textSizeYX, putLine,
                            destroy, setWin, winRef }
   return obj
+
+drawBorder :: String -> CWindow -> IO ()
+drawBorder name (CWindow wp (hght,wid,_,_)) = do
+  wBorder wp defaultBorder
+  let mid = wid `quot` 2
+      start = w2i mid - (P.length name `quot` 2)
+  wMove   wp 0 start
+  wAddStr wp name
 
 dbgLn :: String -> IO ()
 dbgLn s = when dbg$ 
