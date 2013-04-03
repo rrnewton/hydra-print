@@ -172,12 +172,16 @@ createWindows names num = do
     wnoutRefresh w1
     return cwin  
   return (ws,nX,nY)
-  
+
+-- For blanking out inactive windows.
+blankChar :: Char
+blankChar = ' '
+
 -- | Use the simple method of writing blanks to clear.  Convention: overwrite the
 --   lower & right borders, but not the top/left.
 clearWindow :: CWindow -> IO ()
 clearWindow (CWindow wp (hght,wid,_,_)) = do 
-  let blankChar = '.'
+  let 
       width' = wid - borderLeft -- - borderRight
       blank  = P.replicate (w2i width') blankChar
   forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
@@ -186,19 +190,27 @@ clearWindow (CWindow wp (hght,wid,_,_)) = do
     wMove wp (w2i yind) (w2i borderLeft)
     wAddStr wp blank
 --    blit wp blank
+  writeToCorner wp (w2i$ hght-1) (w2i borderLeft) blank 
+  wnoutRefresh wp  
+
+-- | Write out a string that goes all the way to the bottom/right corner.
+writeToCorner :: Window -> Int -> Int -> String -> IO ()
+writeToCorner wp y x str = do
   -- I'm getting a Curses error if I try to write the lower-right corner character!?9
-  wMove wp (w2i$ hght-1) (w2i borderLeft)
-  wAddStr wp (P.init blank)
-  wMove  wp (w2i$ hght-1) (w2i$ wid-1)
+  let len = P.length str
+  wMove   wp y x
+  wAddStr wp (P.init str)
+  wMove   wp y (len-1)
+  ------------
   -- Hack: Even waddch directly is throwing an error in the lower right
   -- corner... Hmm.  A hack is to ignore the error code.
   --throwIfErr_ "waddch" $
   -- waddch wp (fromIntegral$ ord blankChar) -- Don't advance the cursor.
+  ------------
   -- This seems to be a known issue:
   -- http://lists.gnu.org/archive/html/bug-ncurses/2007-09/msg00002.html
-  throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord 'A')
---  blit wp (P.init blank)
-  wnoutRefresh wp  
+  throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord$ P.last str)
+  return ()
 
 wAddCh :: Window -> Char -> IO ()
 wAddCh wp ch = throwIfErr_ "waddch" $ waddch wp (fromIntegral$ ord ch)
@@ -462,22 +474,29 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       forM_ oldWins (\ (CWindow w _) -> delWin w)
       dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
                ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
+--      erase; refresh
+      ----------------------------------------
       -- Erase the bit of border which may be unused:
       (nLines,nCols) <- scrSize
       -- let CWindow wp (hght,wid,y,x) = P.last ws
-      case P.last ws of
+      dummies <- case P.last ws of
         CWindow wp (hght,wid,y,x) ->
           let lastCol = w2i$ x + wid - 1  in
-          when (lastCol < nCols - 1) $ do
-            putLine (P.head$ M.elems activeStrms) (B.pack$ "SCREEN SIZE "++ show (nLines,nCols))
-            putLine (P.head$ M.elems activeStrms) (B.pack$ "LAST WIN AT "++ show (hght,wid,y,x))
-            putLine (P.head$ M.elems activeStrms) (B.pack$ "MOVE TO "++ show ((w2i$ y+hght-1),lastCol))
-            move (w2i$ y+hght-1) lastCol
---            wInsCh stdScr ':'
-            wAddStr stdScr "HHH"
-            wRefresh stdScr
---            wAddStr stdScr (P.replicate (nCols - lastCol) 'H')            
-            return ()
+          if (lastCol < nCols - 1) then do
+            ----------- First wipe the horizontal lower border:
+            let startX     = lastCol+1
+                remainingX = nCols - startX 
+            dummy <- C.newWin 1 remainingX (w2i$ y+hght-1) startX
+            -- writeToCorner dummy 0 0 (P.replicate remainingX ' ')
+            -- wnoutRefresh dummy
+            wclear dummy; wnoutRefresh dummy
+            ----------- Then the vertical right border:
+            let startY = (w2i$ y+1)
+                remainingY = nLines - startY - 1
+            dummy2 <- C.newWin remainingY 1 startY (nCols-1)
+            wclear dummy2; wnoutRefresh dummy2
+            return [dummy,dummy2]
+           else return []
       return ws
       
 -- Helper: import a bytestring into our system.

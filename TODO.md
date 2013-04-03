@@ -21,6 +21,4 @@ BUGS
 ---- 
 
  * Existing windows blank when new ones are added.
- 
- 
- 
+   - Still have blinking issues [2013.04.03] 
