@@ -14,7 +14,9 @@ import Data.IORef
 import Prelude as P
 
 -- baseStrmRate = 1000 -- Seconds
-baseStrmRate = 100 -- Seconds
+baseStrmRate = 500
+-- baseStrmRate = 100 
+
 
 main :: IO ()
 main = do

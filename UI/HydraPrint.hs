@@ -164,17 +164,18 @@ createWindows names num = do
     when dbg $ do dbgLogLn msg
                   wMove w1 1 2
                   wAddStr w1 msg
---    wBorder w1 defaultBorder
---    wRefresh w1
+    wBorder w1 defaultBorder
+    wnoutRefresh w1
     return (CWindow w1 tup)
 
 -- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
 -- otherwise.
 redrawAll :: [CWindow] -> IO ()
 redrawAll wins = do
-  forM_ wins $ \ (CWindow wp _) -> do
-    wBorder  wp defaultBorder
-    wRefresh wp     -- TODO: use wnoutrefresh instead
+--  forM_ wins $ \ (CWindow wp _) -> do
+--    wBorder  wp defaultBorder
+--    wRefresh wp     -- TODO: use wnoutrefresh instead
+--    wnoutRefresh wp 
   C.update
 
 -- How many characters to avoid at the edges of window, for the border:
@@ -208,9 +209,10 @@ createWindowWidget streamName = do -- ioStrm
                        B.replicate (w2i x - B.length oneline) ' '
               cropped = B.take (w2i (x - borderLeft - borderRight)) padded
           wAddStr wp (B.unpack cropped)
---        wBorder wp defaultBorder
-        -- For now refresh the window on every line written..
---        wRefresh wp -- TODO: use wnoutrefresh instead
+          ------ Line is put, update ----
+          wBorder wp defaultBorder
+          -- For now refresh the window on every line written..
+          wnoutRefresh wp
         -- TODO: Do we need to refresh all the OTHER windows to avoid problems!?
 --        C.update
         
@@ -221,8 +223,8 @@ createWindowWidget streamName = do -- ioStrm
 
       setWin cwin@(CWindow wp _) = do
         writeIORef winRef cwin
-        -- wBorder wp defaultBorder
-        -- wRefresh wp  -- TODO: use wnoutrefresh instead
+        wBorder wp defaultBorder
+        wnoutRefresh wp
         -- C.update
         return ()
       
