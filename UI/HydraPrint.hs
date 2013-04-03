@@ -30,6 +30,7 @@ module UI.HydraPrint
 
 import Data.IORef
 import Data.Word
+import Data.Char (ord)
 import Data.Map  as M
 import Data.List as L 
 import Data.ByteString.Char8 as B
@@ -37,6 +38,7 @@ import Prelude as P hiding (unzip4)
 import Control.Monad
 import Control.Concurrent
 import Control.Exception
+import Foreign.C.String (withCAStringLen)
 import System.IO.Streams as S
 import System.IO.Streams.Concurrent (concurrentMerge)
 import UI.HSCurses.CursesHelper as CH
@@ -174,18 +176,41 @@ createWindows names num = do
 --   lower & right borders, but not the top/left.
 clearWindow :: CWindow -> IO ()
 clearWindow (CWindow wp (hght,wid,_,_)) = do 
-  let width' = wid - borderLeft -- - borderRight
-      blank  = P.replicate (w2i width') '.'
+  let blankChar = '.'
+      width' = wid - borderLeft -- - borderRight
+      blank  = P.replicate (w2i width') blankChar
   forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
 --  forM_ [borderTop .. hght - 1] $ \ yind -> do
 --  forM_ [hght - 1 .. hght - 1] $ \ yind -> do          
     wMove wp (w2i yind) (w2i borderLeft)
     wAddStr wp blank
-  -- I'm getting a Curses error if I try to write the lower-right corner character!?
+--    blit wp blank
+  -- I'm getting a Curses error if I try to write the lower-right corner character!?9
   wMove wp (w2i$ hght-1) (w2i borderLeft)
   wAddStr wp (P.init blank)
+  wMove  wp (w2i$ hght-1) (w2i$ wid-1)
+  -- Hack: Even waddch directly is throwing an error in the lower right
+  -- corner... Hmm.  A hack is to ignore the error code.
+  --throwIfErr_ "waddch" $
+  -- waddch wp (fromIntegral$ ord blankChar) -- Don't advance the cursor.
+  -- This seems to be a known issue:
+  -- http://lists.gnu.org/archive/html/bug-ncurses/2007-09/msg00002.html
+  throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord 'A')
+--  blit wp (P.init blank)
   wnoutRefresh wp  
 
+wAddCh :: Window -> Char -> IO ()
+wAddCh wp ch = throwIfErr_ "waddch" $ waddch wp (fromIntegral$ ord ch)
+
+wInsCh :: Window -> Char -> IO ()
+wInsCh wp ch = throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord ch)
+
+blit :: Window -> String -> IO ()
+blit wp s =
+  -- Ignore all non-ascii at the moment:
+  withCAStringLen s $ \ (s',len) -> 
+    throwIfErr_ "waddchnstr" $ waddchnstr wp s' (fromIntegral len)
+  
 -- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
 -- otherwise.
 redrawAll :: [CWindow] -> IO ()
@@ -397,7 +422,11 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             case key of
               KeyChar 'q' -> do
                 CH.end
-                dbgLn " [dbg] NCurses finished." 
+                dbgLn " [dbg] NCurses finished."
+              KeyChar 'p' -> do
+                -- Pause until another key is hit.
+                _ <- C.getCh
+                loop mps
               KeyResize -> do           
                C.endWin
                C.update
