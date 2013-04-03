@@ -168,6 +168,16 @@ createWindows names num = do
     wnoutRefresh w1
     return (CWindow w1 tup)
 
+-- | Use the simple method of writing blanks to all (non-border) positions.
+clearWindow :: CWindow -> IO ()
+clearWindow (CWindow wp (hght,wid,_,_)) = do 
+  let width' = wid - borderLeft - borderRight
+      blank  = P.replicate (w2i width') ' '
+  forM_ [borderTop .. hght - borderBottom] $ \ yind -> do 
+    wMove wp (w2i yind) (w2i borderLeft)
+    wAddStr wp blank
+  wnoutRefresh wp  
+
 -- This SHOULDNT be necessary, but I'm having problems with blanking and blinking
 -- otherwise.
 redrawAll :: [CWindow] -> IO ()
@@ -231,12 +241,6 @@ createWindowWidget streamName = do -- ioStrm
       obj = WindowWidget { hist, textSizeYX, putLine,
                            destroy, setWin, winRef }
   return obj
-
-initialize :: IO ()
-initialize = do
-  _ <- leaveOk True
-  _ <- cursSet CursorInvisible
-  return ()
 
 dbgLn :: String -> IO ()
 dbgLn s = when dbg$ 
@@ -302,11 +306,13 @@ phase1 s1name merge1 = do
       phase0 merge1
     Just (NewStream (s2name,s2))     -> do
       dbgLn $ "Got newStream! "++s2name++".  Transition to steady state..." -- (press enter)
---      P.getLine
-
-      -- Transition to the steady state.
+      -- Transition to the steady state:
       CH.start
---      cursesEvts <- S.nullInput
+      -- Some settings:
+      _ <- leaveOk True
+      _ <- cursSet CursorInvisible
+      -- startColor
+
       cursesEvts <- S.makeInputStream $ fmap (Just . CursesKeyEvent) C.getCh 
       
       -- Warning, because the curses events go into a concurrentMerge, they will keep
@@ -352,6 +358,11 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
 --            destroy (activeStrms!sid)
             let active' = M.delete sid activeStrms
+
+            -- Deleting always shifts down the LAST window (should improve this)
+            clearWindow (P.last windows)
+            -- case P.last windows of
+            --   CWindow wp _ -> wclear wp
             windows' <- reCreate active' windows
             loop mps{ activeStrms  = active',
                       finishedStrms= hist (activeStrms!sid) : finishedStrms,

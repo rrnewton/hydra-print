@@ -8,6 +8,10 @@ issues at some point.
 
  * add wnoutrefresh to hscurses lib (and use it) 
    (Then maybe get more sophisticated about when to do updates)
+
+ * Rather than always having a dense packing of tiles (deleting the
+   last window), allow "gaps" in the middle, to avoid unnecessary
+   shifting.
  
 BUGS
 ---- 
