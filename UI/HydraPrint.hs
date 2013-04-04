@@ -343,7 +343,7 @@ createWindowWidget streamName = do -- ioStrm
         cwin@(CWindow wp (y,x,_,_) _) <- io$ readIORef winRef
         updateWindow wp $ do
          oldhist <- io$ readIORef revHist
-         let msg     = bstr `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
+         let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
          let newhist = msg : oldhist
          io$ writeIORef revHist newhist    
          let y'    = y - borderTop - borderBottom
