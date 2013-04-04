@@ -10,8 +10,8 @@
 module UI.HydraPrint
        (
          -- * hydraPrint and friends
-         hydraPrint,
-         HydraConf(..), defaultHydraConf
+         hydraPrint, hydraPrintStatic,
+         HydraConf(..), defaultHydraConf, DeleteWinWhen(..)
          
          -- * Types
          
@@ -38,7 +38,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P hiding (unzip4) 
 import Control.Monad
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Exception
 import Foreign.C.String (withCAStringLen)
 
@@ -86,8 +86,10 @@ dbg = case P.lookup "DEBUG_HYDRA" theEnv of
         Just "False" -> False
         Just  _      -> True
 
+theEnv :: [(String, String)]
 theEnv = unsafePerformIO$ getEnvironment
 
+io :: MonadIO m => IO a -> m a
 io x = liftIO x
 
 --------------------------------------------------------------------------------
@@ -98,15 +100,16 @@ data HydraConf =
   HydraConf
   {
 --  majorMode :: -- Interleaved, windows, or serialized.
-    deleteWhen :: DeleteWhen    
+    deleteWhen :: DeleteWinWhen
+--  useColor ::  -- Use colors if they are supported.    
   }
 
 -- | How long should we wait after a stream goes dry to close the window associated
 -- with it?  If 'Never' is selected, then the window will stay until a new stream
 -- causes the screen to reconfigure, or hydraPrint exits.
-data DeleteWhen = Never
-                | After Seconds
-                | Immediately
+data DeleteWinWhen = Never
+                   | After Seconds
+                   | Immediately
 
 type Seconds = Double
 
@@ -446,10 +449,43 @@ dbgLog = unsafePerformIO $ do
 
 --------------------------------------------------------------------------------
 
+-- | This simply takes the names of the desired initial windows, and sets things up.
+initAndRunCurses :: [String] -> (MPState -> Curses a) -> IO a
+initAndRunCurses names action = runCurses $ do
+  setCursorMode CursorInvisible
+  cids <- initColors
+  -- _ <- leaveOk True
+  wids <- forM names $ \ sname -> 
+    io$ createWindowWidget sname
+  (wins,_,_) <- createWindows (zip names cids) (i2w$ P.length names)
+  sequence$ zipWith setWin wids wins
+  action$ MPState { activeStrms= M.fromList (zip [0..] wids),
+                    finishedStrms= [],
+                    windows = wins,
+                    colorIDs= cids -- tail cids ++ [head cids]
+                  }
+
+--------------------------------------------------------------------------------
+
+
+-- | Take a fixed list of input streams.  This variant preemptively splits the screen
+-- into exactly one panel per stream.
+hydraPrintStatic :: HydraConf -> [(String, InputStream ByteString)] -> IO ()
+hydraPrintStatic conf [] = return ()
+hydraPrintStatic conf srcs = runCurses $ do  
+  let (nameL,strmL) = P.last srcs
+      (names,strms) = unzip (P.init srcs)
+  merged <- io$ concurrentMerge strms
+  undefined
+  steadyState conf{deleteWhen=Never} undefined undefined undefined undefined 
+  
+--  phase0 conf =<< S.map NewStream strmSrc  
+--  steadyState conf initSt 1 (s2name,s2) merge2
+
+--------------------------------------------------------------------------------  
+
 -- | Takes a /source/ of input streams, which may be added dynamically.  A stream
 -- that joins dynamically, exits once it issues an end-of-stream.
---
--- For a static collection of input streams, just use `System.IO.Streams.fromList`
 --
 -- `hydraPrint` is a blocking call that doesn't return until ALL streams that
 -- appear produce an end-of-stream, AND the stream-source itself reaches
@@ -492,36 +528,23 @@ phase1 conf s1name merge1 = do
       phase0 conf merge1
     Just (NewStream (s2name,s2))     -> do
       dbgLn $ "Got newStream! "++s2name++".  Transition to steady state..." -- (press enter)
-      -- Transition to the steady state:
-      runCurses $ do
-        setCursorMode CursorInvisible
-        cids <- initColors
-        -- _ <- leaveOk True
-
-        -- PROBLEM: We don't want to do a nested runCurses here...
-        -- cursesEvts <- io$ S.makeInputStream $ fmap (Just . CursesKeyEvent)
-        --                                       (C.getEvent defaultWindow Nothing)
-
-        -- Warning, because the curses events go into a concurrentMerge, they will keep
-        -- being read into Haskell, irrespective of what this "main" thread does.     
+      ----------------------
+      -- PROBLEM: We don't want to do a nested runCurses here...
+      -- cursesEvts <- io$ S.makeInputStream $ fmap (Just . CursesKeyEvent)
+      --                                       (C.getEvent defaultWindow Nothing)
+      -- Warning, because the curses events go into a concurrentMerge, they will keep
+      -- being read into Haskell, irrespective of what this "main" thread does.     
 --        merge2 <- io$ concurrentMerge [merge1, cursesEvts]
-        let merge2 = merge1
-        wid0         <- io$ createWindowWidget s1name
-        ([win0],_,_) <- createWindows [(s1name, head cids)] 1
-        setWin wid0 win0
-        let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
-                               finishedStrms= [],
-                               windows = [win0],
-                               colorIDs= cids -- tail cids ++ [head cids]
-                             }
-        redrawAll [win0]
-        steadyState initSt 1 (s2name,s2) merge2
+      let merge2 = merge1
+      ---------------------- 
+      initAndRunCurses [s1name] $ \ initMPS ->
+        steadyState conf initMPS 1 (s2name,s2) merge2        
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
 ----------------------------------------PHASE3----------------------------------------
 -- Re-enter this loop every time there is a new stream.
-steadyState :: MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> Curses ()
-steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do
+steadyState :: HydraConf -> MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> Curses ()
+steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do
   -- First, deal with the new stream.
   newStrm' <- io$ preProcess sidCnt newStrm
   merged'  <- io$ concurrentMerge [merged, newStrm']
@@ -544,21 +567,23 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             loop mps
           Just (NewStrLine sid EOS)          -> do
             io$ dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
---            destroy (activeStrms!sid)
-            let active' = M.delete sid activeStrms
+            case deleteWhen conf of
+              Never -> loop mps -- Don't change *anything*..
+              After _secs -> error "hydraPrint: incomplete, does not yet support deleteWhen=After"
+              Immediately -> do 
+                let active' = M.delete sid activeStrms
 
-            -- Deleting always shifts down the LAST window (should improve this)
-            case P.reverse windows of
-              [] -> error "hydraPrint: Internal error.  Expecting list of windows to be non-empty."
-              lst:_ -> clearWindow lst
-              
-            windows' <- reCreate active' windows
-            loop mps{ activeStrms  = active',
-                      finishedStrms= hist (activeStrms!sid) : finishedStrms,
-                      windows      = windows' }
+                -- Deleting always shifts down the LAST window (should improve this)
+                case P.reverse windows of
+                  [] -> error "hydraPrint: Internal error.  Expecting list of windows to be non-empty."
+                  lst:_ -> clearWindow lst
+                windows' <- reCreate active' windows
+                loop mps{ activeStrms  = active',
+                          finishedStrms= hist (activeStrms!sid) : finishedStrms,
+                          windows      = windows' }
           Just (NewStream (s2name,s2))       -> do
             io$ dbgPrnt $ " [dbg] NEW stream: "++ show s2name
-            steadyState mps (sidCnt+1) (s2name,s2) merged'
+            steadyState conf mps (sidCnt+1) (s2name,s2) merged'
           Just (CursesKeyEvent key) -> do
             case key of
 {-              
