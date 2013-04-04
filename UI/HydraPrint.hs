@@ -36,7 +36,8 @@ import Data.Word
 import Data.Char (ord)
 import Data.Map  as M
 import Data.List as L 
-import Data.ByteString.Char8 as B
+import qualified Data.ByteString.Char8 as B
+import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P hiding (unzip4) 
 import Control.Monad
@@ -173,7 +174,7 @@ createWindows names num = do
     let Just mg   = color "magenta"
         Just blck = color "black"
     initPair pr mg blck
-    wAttrSet w1 (setBold attr True, pr)
+--    wAttrSet w1 (setBold attr True, pr)
     
     let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
     when dbg $ do dbgLogLn msg
@@ -273,7 +274,7 @@ createWindowWidget streamName = do -- ioStrm
       putLine bstr = do
         cwin@(CWindow wp (y,x,_,_)) <- readIORef winRef
         oldhist <- readIORef revHist
-        let msg     = bstr `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
+        let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
         let newhist = msg : oldhist
         writeIORef revHist newhist    
         let y'    = y - borderTop - borderBottom
@@ -490,8 +491,9 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       ----------------------------------------
       -- Erase the bit of border which may be unused:
       (nLines,nCols) <- scrSize
-      dummies <- case P.last ws of
-        CWindow wp (hght,wid,y,x) ->
+      dummies <- case reverse ws of
+        [] -> return []
+        (CWindow wp (hght,wid,y,x) : _) ->
           let lastCol = w2i$ x + wid - 1  in
           if (lastCol < nCols - 1) then do
             ----------- First wipe the horizontal lower border:
@@ -669,23 +671,30 @@ data Lifted a = EOS | StrmElt a
 --   (1) a list of input streams that will carry results on the fly, as they are produced, and
 --   (2) a barrier action that waits for all parallel work to be finished and yields the final results.
 -- The first list is `numWorkers` long, and the second is `numTasks`.
+--
+-- Additional contracts: 
 parForM :: Int -> [a] -> (S.OutputStream c -> a -> IO b) -> IO ([S.InputStream c], IO [b])
 parForM numWorkers inputs action = 
   do let numTasks = P.length inputs
      answers     <- sequence$ P.replicate numTasks newEmptyMVar
-     workIn      <- newIORef (P.zip inputs answers)
+     workLeft    <- newIORef (P.zip inputs answers)
      chans       <- sequence $ P.replicate numWorkers newChan
-     resultStrms <- mapM chanToInput chans 
-     outStrms    <- mapM chanToOutput chans 
-     asyncs <- forM outStrms $ \ strm -> 
-       A.async $ do 
+     resultStrms <- mapM chanToInput  chans 
+     outStrms    <- mapM chanToOutput chans
+     ------------
+     -- That didn't seem to work.... let's try a different way of creating an input/output pair.     
+     ------------     
+     asyncs <- forM (zip outStrms [0..]) $ \ (strm,idx) -> 
+       A.async $ do
+--           B.hPutStrLn System.IO.stderr (B.pack$ "INSIDE ASYNC, "++show idx++" of "++show (P.length outStrms))
            let pfloop = do -- Pop work off the queue:                           
-                           x <- atomicModifyIORef workIn 
-                                                  (\ls -> if P.null ls 
-                                                          then ([], Nothing) 
-                                                          else (P.tail ls, Just ((\ (h:_)->h) ls)))
+                           x <- atomicModifyIORef workLeft 
+                                 (\ls -> if P.null ls 
+                                         then ([], Nothing) 
+                                         else (P.tail ls, Just ((\ (h:_)->h) ls)))
+--                           B.hPutStrLn System.IO.stderr (B.pack$ "POPPED work "++show (idx, fmap (const ()) x))
                            case x of 
-                             Nothing -> return () -- putMVar finit ()
+                             Nothing -> S.write Nothing strm -- End the stream.
                              Just (input,mv) -> 
                                do result <- action strm input
                                   putMVar mv result
