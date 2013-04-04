@@ -106,6 +106,7 @@ data MPState =
     -- | All active windows.  Need to be explicitly deleted.
     windows :: [CWindow],
 
+    -- | All color IDs, cycle through these for new windows.
     colorIDs :: [ColorID]
     -- Log: TODO: could log stream create/delete events and their times.     
   }
@@ -160,7 +161,7 @@ data StreamHistory =
 type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
-data CWindow = CWindow C.Window WinPos
+data CWindow = CWindow C.Window WinPos ColorID 
   deriving Show
 
 --------------------------------------------------------------------------------
@@ -174,10 +175,18 @@ allColors = [ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBl
 -- Return a finite list of color IDs, we rotate through these.
 initColors :: Curses [ColorID]
 initColors = do
-  ls <- mapM (\(idx, x) -> newColorID x ColorBlack idx)
-             (zip [1..] allColors)
-  return$ defaultColorID : ls
-       
+  supports <- supportsColor
+  if supports then do 
+     cdc <- canDefineColor
+     mx  <- maxColorID
+     -- Here we make the backgrounds actually black instead of grey:
+     when cdc $ defineColor ColorBlack 0 0 0
+     ls <- mapM (\(idx, x) -> newColorID x ColorBlack idx)
+                (zip [1..mx] allColors)
+     return$ defaultColorID : ls
+   else
+     return [defaultColorID]
+
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
 createWindows :: [(String,ColorID)] -> Word -> Curses ([CWindow],Word,Word)
@@ -194,7 +203,7 @@ createWindows names num = do
     --               moveCursor 1 2
     --               drawString msg
     --               drawBox Nothing Nothing
-    let cwin = CWindow w1 tup
+    let cwin = CWindow w1 tup colorID
     updateWindow w1$ do
       setColor colorID
       drawNamedBorder name cwin
@@ -232,7 +241,7 @@ clearWindow (CWindow wp _) = do
     setBackground (Glyph ' ' [])
 #else
 clearWindow :: CWindow -> Curses ()
-clearWindow (CWindow wp (hght,wid,_,_)) = updateWindow wp $ do
+clearWindow (CWindow wp (hght,wid,_,_) _) = updateWindow wp $ do
   let 
       width' = wid - borderLeft -- - borderRight
       blank  = P.replicate (w2i width') blankChar
@@ -331,7 +340,7 @@ createWindowWidget streamName = do -- ioStrm
   winRef  <- newIORef (error "winRef field uninialized.  Call setWin.")
   let hist = StreamHistory{streamName, revHist}
       putLine bstr = do
-        cwin@(CWindow wp (y,x,_,_)) <- io$ readIORef winRef
+        cwin@(CWindow wp (y,x,_,_) _) <- io$ readIORef winRef
         updateWindow wp $ do
          oldhist <- io$ readIORef revHist
          let msg     = bstr `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
@@ -350,10 +359,10 @@ createWindowWidget streamName = do -- ioStrm
            drawNamedBorder streamName cwin
         
       textSizeYX = do
-        CWindow _ (y,x,_,_) <- readIORef winRef
+        CWindow _ (y,x,_,_) _ <- readIORef winRef
         return (y,x)
 
-      setWin cwin@(CWindow wp _) = do
+      setWin cwin@(CWindow wp _ _) = do
         io$ writeIORef winRef cwin
         updateWindow wp $ 
           drawNamedBorder streamName cwin
@@ -364,9 +373,11 @@ createWindowWidget streamName = do -- ioStrm
   return obj
 
 drawNamedBorder :: String -> CWindow -> Update ()
-drawNamedBorder name (CWindow wp (hght,wid,y,_)) = do
+drawNamedBorder name (CWindow wp (hght,wid,y,_) winColor) = do
 --  wBorder wp defaultBorder
+  setColor defaultColorID
   drawBox Nothing Nothing
+  setColor winColor
   let isTop = (y == 0)
       -- name' = llCorner : name ++ [lrCorner]
       name' = "[" ++ name ++ "]"
@@ -547,7 +558,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
         setWin wid win 
       -- Actually delete the old windows:
 --      forM_ oldWins (\ (CWindow w _) -> delWin w)
-      forM_ oldWins (\ (CWindow w _) -> closeWindow w)
+      forM_ oldWins (\ (CWindow w _ _) -> closeWindow w)
       -- io$ dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
       --          ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
       ----------------------------------------
@@ -555,14 +566,14 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
       (nLines,nCols) <- screenSize
       dummies <- case reverse ws of
         [] -> return []
-        (CWindow wp (hght,wid,y,x) : _) ->
+        (CWindow wp (hght,wid,y,x) _ : _) ->
           let lastCol = w2i$ x + wid - 1  in
           if (lastCol < nCols - 1) then do
             ----------- First wipe the horizontal lower border:
             let startX     = lastCol+1
                 remainingX = fromIntegral$ nCols - startX 
             dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
-            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX)
+            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX) defaultColorID
             -- wclear dummy; wnoutRefresh dummy
             io$ dbgPrnt$ "Dummy horiz (screen "++show (nLines,nCols)++"): "++show dummyCW
 --            clearWindow dummyCW
@@ -570,7 +581,7 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
             let startY     = (w2i$ y+1)
                 remainingY = fromIntegral$ nLines - startY - 1
             dummy2 <- newWindow remainingY 1 startY (nCols-1)
-            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1))
+            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1)) defaultColorID
             io$ dbgPrnt$ "Dummy vert: "++show dummy2CW
             -- wclear dummy2; wnoutRefresh dummy2
 --            clearWindow dummy2CW
