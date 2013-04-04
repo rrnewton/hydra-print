@@ -471,17 +471,19 @@ initAndRunCurses names action = runCurses $ do
 -- | Take a fixed list of input streams.  This variant preemptively splits the screen
 -- into exactly one panel per stream.
 hydraPrintStatic :: HydraConf -> [(String, InputStream ByteString)] -> IO ()
-hydraPrintStatic conf [] = return ()
-hydraPrintStatic conf srcs = runCurses $ do  
+hydraPrintStatic _cnf [] = return ()
+hydraPrintStatic conf srcs = do
+  -- Because of how steadyStat is structured, we need to peel off the LAST stream:
   let (nameL,strmL) = P.last srcs
       (names,strms) = unzip (P.init srcs)
-  merged <- io$ concurrentMerge strms
-  undefined
-  steadyState conf{deleteWhen=Never} undefined undefined undefined undefined 
-  
---  phase0 conf =<< S.map NewStream strmSrc  
---  steadyState conf initSt 1 (s2name,s2) merge2
+  strms' <- sequence$ zipWith preProcess [0..] strms
+  merged <- concurrentMerge strms'
 
+  -- We set up all but the LAST stream, and then go into steady state:
+  initAndRunCurses names $ \ initMPS -> do 
+    steadyState conf{deleteWhen=Never} initMPS (i2w$ P.length names) (nameL,strmL) merged
+--  steadyState conf initSt 1 (s2name,s2) merge2
+    
 --------------------------------------------------------------------------------  
 
 -- | Takes a /source/ of input streams, which may be added dynamically.  A stream
@@ -538,6 +540,7 @@ phase1 conf s1name merge1 = do
       let merge2 = merge1
       ---------------------- 
       initAndRunCurses [s1name] $ \ initMPS ->
+        -- The first stream as ID 0, so this next one has ID 1:
         steadyState conf initMPS 1 (s2name,s2) merge2        
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
@@ -659,7 +662,6 @@ preProcess id s = do
   s'  <- S.lines s
   s'' <- liftStream s'
   S.map (NewStrLine id) s''
-
 
 
 type StreamID = Word
