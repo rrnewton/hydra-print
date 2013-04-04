@@ -79,7 +79,7 @@ import Test.Framework.TH (testGroupGenerator)
 #endif
 
 dbg :: Bool
-dbg = case P.lookup "DEBUG" theEnv of 
+dbg = case P.lookup "DEBUG_HYDRA" theEnv of 
         Nothing      -> False
         Just ""      -> False
         Just "0"     -> False
