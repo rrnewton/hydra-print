@@ -104,8 +104,10 @@ data MPState =
     finishedStrms :: [StreamHistory],
 
     -- | All active windows.  Need to be explicitly deleted.
-    windows :: [CWindow]
-    -- Log: TODO: could log stream create/delete events and their times.
+    windows :: [CWindow],
+
+    colorIDs :: [ColorID]
+    -- Log: TODO: could log stream create/delete events and their times.     
   }
 
 -- | All the state for a widget, that persists beyond the creation and destruction of
@@ -163,24 +165,39 @@ data CWindow = CWindow C.Window WinPos
 
 --------------------------------------------------------------------------------
 
+-- These are all the basic colors currently exported by UI.NCurses, except black:
+-- We make sure the basic, white-on-black option is first.
+allColors :: [Color]
+--allColors = [ColorWhite, ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
+allColors = [ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
+
+-- Return a finite list of color IDs, we rotate through these.
+initColors :: Curses [ColorID]
+initColors = do
+  ls <- mapM (\(idx, x) -> newColorID x ColorBlack idx)
+             (zip [1..] allColors)
+  return$ defaultColorID : ls
+       
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: [String] -> Word -> Curses ([CWindow],Word,Word)
+createWindows :: [(String,ColorID)] -> Word -> Curses ([CWindow],Word,Word)
 createWindows names num = do
   (curY,curX) <- screenSize
   let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
   ws <- forM (P.zip names (NE.toList panelDims)) $ 
-   \ (name, tup@(hght,wid, posY, posX)) -> do
+   \ ((name,colorID), tup@(hght,wid, posY, posX)) -> do
     w1 <- newWindow (w2i hght) (w2i wid) (w2i posY) (w2i posX)
-    
+        
     let msg = ("CreatedWindow:  at "++show tup++", name "++name)   
     -- when dbg $ do dbgLogLn msg
     --               moveCursor 1 2
     --               drawString msg
     --               drawBox Nothing Nothing
     let cwin = CWindow w1 tup
-    updateWindow w1$ drawNamedBorder name cwin
+    updateWindow w1$ do
+      setColor colorID
+      drawNamedBorder name cwin
     return cwin  
   return (ws,nX,nY)
 
@@ -428,6 +445,7 @@ phase1 s1name merge1 = do
       -- Transition to the steady state:
       runCurses $ do
         setCursorMode CursorInvisible
+        cids <- initColors
         -- _ <- leaveOk True
 
         -- PROBLEM: We don't want to do a nested runCurses here...
@@ -439,11 +457,13 @@ phase1 s1name merge1 = do
 --        merge2 <- io$ concurrentMerge [merge1, cursesEvts]
         let merge2 = merge1
         wid0         <- io$ createWindowWidget s1name
-        ([win0],_,_) <- createWindows [s1name] 1
+        ([win0],_,_) <- createWindows [(s1name, head cids)] 1
         setWin wid0 win0
         let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
                                finishedStrms= [],
-                               windows= [win0] }
+                               windows = [win0],
+                               colorIDs= cids -- tail cids ++ [head cids]
+                             }
         redrawAll [win0]
         steadyState initSt 1 (s2name,s2) merge2
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
@@ -519,7 +539,8 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
           numactive = fromIntegral (M.size active')
-      (ws,numHoriz,numVert) <- createWindows names numactive
+          withcolors = P.zip names (P.cycle (colorIDs state0))
+      (ws,numHoriz,numVert) <- createWindows withcolors numactive
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
