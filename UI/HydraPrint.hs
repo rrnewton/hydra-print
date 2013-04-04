@@ -9,10 +9,9 @@
 -- number of streams varies, the multiplexing of the terminal output does too.
 module UI.HydraPrint
        (
-         -- * Main Entrypoints
-         hydraPrint
-         -- createWindows, initialize,
-
+         -- * hydraPrint and friends
+         hydraPrint,
+         HydraConf(..), defaultHydraConf
          
          -- * Types
          
@@ -92,8 +91,37 @@ theEnv = unsafePerformIO$ getEnvironment
 io x = liftIO x
 
 --------------------------------------------------------------------------------
--- Types
+-- User visible configuration
 --------------------------------------------------------------------------------
+
+data HydraConf =
+  HydraConf
+  {
+--  majorMode :: -- Interleaved, windows, or serialized.
+    deleteWhen :: DeleteWhen    
+  }
+
+-- | How long should we wait after a stream goes dry to close the window associated
+-- with it?  If 'Never' is selected, then the window will stay until a new stream
+-- causes the screen to reconfigure, or hydraPrint exits.
+data DeleteWhen = Never
+                | After Seconds
+                | Immediately
+
+type Seconds = Double
+
+-- | Like the name says, a default set of options for passing to `hydraPrint`.
+defaultHydraConf :: HydraConf
+defaultHydraConf =
+  HydraConf
+  {
+    deleteWhen = Immediately
+  }
+
+--------------------------------------------------------------------------------
+-- Internal Types
+--------------------------------------------------------------------------------
+
 
 -- | The state of an active `hydraPrint` computation.
 data MPState =
@@ -171,6 +199,17 @@ data CWindow = CWindow C.Window WinPos ColorID
 allColors :: [Color]
 --allColors = [ColorWhite, ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
 allColors = [ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
+
+-- TODO: Pair attributes with them:
+-- AttributeStandout	 
+-- AttributeUnderline	 
+-- AttributeReverse	 
+-- AttributeBlink	 
+-- AttributeDim	 
+-- AttributeBold	 
+-- AttributeAltCharset	 
+-- AttributeInvisible	 
+-- AttributeProtect
 
 -- Return a finite list of color IDs, we rotate through these.
 initColors :: Curses [ColorID]
@@ -415,12 +454,12 @@ dbgLog = unsafePerformIO $ do
 -- `hydraPrint` is a blocking call that doesn't return until ALL streams that
 -- appear produce an end-of-stream, AND the stream-source itself reaches
 -- end-of-stream.
-hydraPrint :: InputStream (String, InputStream ByteString) -> IO ()
-hydraPrint strmSrc = phase0 =<< S.map NewStream strmSrc
+hydraPrint :: HydraConf -> InputStream (String, InputStream ByteString) -> IO ()
+hydraPrint conf strmSrc = phase0 conf =<< S.map NewStream strmSrc
 ----------------------------------------PHASE0----------------------------------------  
 -- Nothing to do before there is at least ONE stream...   
-phase0 :: InputStream Event -> IO ()
-phase0 strmSrc' = do 
+phase0 :: HydraConf -> InputStream Event -> IO ()
+phase0 conf strmSrc' = do 
   dbgLn $ "phase0: blocking for event."
   ms1 <- S.read strmSrc'
   case ms1 of
@@ -432,13 +471,13 @@ phase0 strmSrc' = do
      s1'      <- preProcess 0 s1
      -- Next, we need a "select/epoll".  We use concurrentMerge.
      merge1 <- concurrentMerge [strmSrc', s1']
-     phase1 s1name merge1
+     phase1 conf s1name merge1
    _ -> error "hydraPrint: Internal error. Unexpected event."
 ----------------------------------------PHASE1----------------------------------------
 -- Initially, we start in "cooked" (non-ncurses) mode, and stay there as long as
 -- there is only one output stream.     
-phase1 :: String -> InputStream Event -> IO ()
-phase1 s1name merge1 = do 
+phase1 :: HydraConf -> String -> InputStream Event -> IO ()
+phase1 conf s1name merge1 = do 
   dbgLn $ "phase1: blocking for event."
   nxt <- S.read merge1
   case nxt of
@@ -447,10 +486,10 @@ phase1 s1name merge1 = do
       return ()
     Just (NewStrLine _ (StrmElt ln)) -> do
       B.putStrLn ln
-      phase1 s1name merge1
+      phase1 conf s1name merge1
     Just (NewStrLine sid EOS)          -> do 
       dbgLn $ "Got stream EOS! ID "++show sid
-      phase0 merge1
+      phase0 conf merge1
     Just (NewStream (s2name,s2))     -> do
       dbgLn $ "Got newStream! "++s2name++".  Transition to steady state..." -- (press enter)
       -- Transition to the steady state:
@@ -675,7 +714,7 @@ test = do
   S.unRead x s1
   _ <- P.getLine
   
-  hydraPrint =<< S.fromList [("s1",s1),("s2",s2)]
+  hydraPrint defaultHydraConf =<< S.fromList [("s1",s1),("s2",s2)]
 
 --------------------------------------------------------------------------------
 -- Missing bits that should be elsewhere:
