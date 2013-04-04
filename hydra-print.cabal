@@ -28,6 +28,7 @@ cabal-version:       >=1.8
 
 Library
   Exposed-modules:  UI.HydraPrint
+                    Scripting.Parallel.ThreadPool
   CPP-options: -DNOTESTING
   Source-repository head
     type:     git
