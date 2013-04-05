@@ -1,11 +1,11 @@
-{-# LANGUAGE CPP#-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | The server, sets up a named pipe to receive the names of named pipes.
 
 module Main where
 
 import Data.IORef
-import qualified Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Control.Monad       (when, forM_)
 -- import Control.Concurrent.Chan
@@ -20,7 +20,7 @@ import System.Posix.Types (CMode(..))
 import System.Process     (runInteractiveCommand)
 import System.Exit        (exitFailure, exitSuccess)
 
-import UI.HydraPrint (hydraPrint, defaultHydraConf)
+import UI.HydraPrint (hydraPrint, defaultHydraConf, HydraConf(..))
 import qualified System.IO.Streams as S
 import System.IO.Streams.Concurrent (concurrentMerge)
 
@@ -63,9 +63,11 @@ defaultTempDir = unsafePerformIO $ do
 data Flag =
        PipeSrc FilePath   -- | Use a user-provided file as the source of pipes.
      | SessionID FilePath -- | Use a session ID to match-up with clients.
-     | ShowHelp 
+     | ShowHelp
+     | NoColor
   deriving (Eq,Read,Ord,Show)
 
+isSrcFlag :: Flag -> Bool
 isSrcFlag (PipeSrc _)   = True
 isSrcFlag (SessionID _) = True
 isSrcFlag _             = False
@@ -77,6 +79,8 @@ cli_options =
        "Use a specific file as the source of streams."
      , Option ['s'] ["session"] (ReqArg SessionID "STRING")
        "Use a sessionID to avoid collision with other hydra-view servers."
+     , Option [] ["no-color"]   (NoArg  NoColor)
+       "Don't use color to distinguish panels."
      , Option ['h'] ["help"]    (NoArg  ShowHelp)
        "Show help and exit."
      ]
@@ -101,12 +105,8 @@ main = do
       openPipe p = do b <- doesFileExist p
                       when b $ removeFile p
                       createNamedPipe p pipePerms
-      (hlp, options') = L.partition (==ShowHelp) options
-  case hlp of
-    [] -> return () 
-    _  -> do showUsage
-             exitSuccess
-  pipe <- case options' of
+  when (ShowHelp `elem` options) $ do showUsage; exitSuccess
+  pipe <- case filter isSrcFlag options of
            [PipeSrc file] -> return file -- Pre-existing! 
            [SessionID id] -> do let p = defaultTempDir </> "hydra-view_session_"++id++".pipe"
                                 openPipe p
@@ -135,8 +135,8 @@ main = do
         loop
   strmSrc <- S.makeInputStream persistent
 #else
-  (_, stdoutH, _, pid) <- runInteractiveCommand$ "tail -f "++pipe
-  strmSrc <- S.lines =<< S.handleToInputStream stdoutH
+  (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe
+  strmSrc <- S.lines =<< S.handleToInputStream outH
 #endif  
 
   openHnds <- newIORef []
@@ -178,7 +178,7 @@ main = do
       _  -> do 
                let cmd = unwords restargs
                putStrLn$" [hydra-view] First output stream from command: "++show cmd
-               (_stdinH, stdoutH, stderrH, pid) <- runInteractiveCommand cmd
+               (_stdinH, stdoutH, stderrH, _pid) <- runInteractiveCommand cmd
                inS    <- S.lines =<< S.handleToInputStream stdoutH
                errS   <- S.lines =<< S.handleToInputStream stderrH
                merged <- concurrentMerge [inS,errS]
@@ -186,5 +186,8 @@ main = do
                singleton <- S.fromList [("main",merged')]
                S.appendInputStream singleton srcs
 
-  hydraPrint defaultHydraConf srcs'
+  let useColor = not$ NoColor `elem` options
+      conf = defaultHydraConf { useColor }
+
+  hydraPrint conf srcs'
   return ()

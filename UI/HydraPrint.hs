@@ -100,8 +100,9 @@ data HydraConf =
   HydraConf
   {
 --  majorMode :: -- Interleaved, windows, or serialized.
-    deleteWhen :: DeleteWinWhen
---  useColor ::  -- Use colors if they are supported.    
+    deleteWhen :: DeleteWinWhen,
+--  useColor ::  -- Use colors if they are supported.
+    useColor :: Bool 
   }
 
 -- | How long should we wait after a stream goes dry to close the window associated
@@ -118,7 +119,8 @@ defaultHydraConf :: HydraConf
 defaultHydraConf =
   HydraConf
   {
-    deleteWhen = Immediately
+    deleteWhen = Immediately,
+    useColor = True
   }
 
 --------------------------------------------------------------------------------
@@ -450,10 +452,11 @@ dbgLog = unsafePerformIO $ do
 --------------------------------------------------------------------------------
 
 -- | This simply takes the names of the desired initial windows, and sets things up.
-initAndRunCurses :: [String] -> (MPState -> Curses a) -> IO a
-initAndRunCurses names action = runCurses $ do
+initAndRunCurses :: HydraConf -> [String] -> (MPState -> Curses a) -> IO a
+initAndRunCurses HydraConf{useColor} names action = runCurses $ do
   setCursorMode CursorInvisible
-  cids <- initColors
+  cids <- if useColor then initColors
+          else return [defaultColorID]
   -- _ <- leaveOk True
   wids <- forM names $ \ sname -> 
     io$ createWindowWidget sname
@@ -476,16 +479,15 @@ initAndRunCurses names action = runCurses $ do
 -- | Take a fixed list of input streams.  This variant preemptively splits the screen
 -- into exactly one panel per stream.
 hydraPrintStatic :: HydraConf -> [(String, InputStream ByteString)] -> IO ()
-hydraPrintStatic _cnf [] = return ()
+hydraPrintStatic _ [] = return ()
 hydraPrintStatic conf srcs = do
   -- Because of how steadyStat is structured, we need to peel off the LAST stream:
   let (nameL,strmL) = P.last srcs
       (names,strms) = unzip (P.init srcs)
   strms' <- sequence$ zipWith preProcess [0..] strms
   merged <- concurrentMerge strms'
-
   -- We set up all but the LAST stream, and then go into steady state:
-  initAndRunCurses names $ \ initMPS -> do 
+  initAndRunCurses conf names $ \ initMPS -> do 
     steadyState conf{deleteWhen=Never} initMPS (i2w$ P.length names) (nameL,strmL) merged
 --  steadyState conf initSt 1 (s2name,s2) merge2
     
@@ -544,7 +546,7 @@ phase1 conf s1name merge1 = do
 --        merge2 <- io$ concurrentMerge [merge1, cursesEvts]
       let merge2 = merge1
       ---------------------- 
-      initAndRunCurses [s1name] $ \ initMPS ->
+      initAndRunCurses conf [s1name] $ \ initMPS ->
         -- The first stream as ID 0, so this next one has ID 1:
         steadyState conf initMPS 1 (s2name,s2) merge2        
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
