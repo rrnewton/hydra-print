@@ -4,36 +4,41 @@
 
 module Main where
 
-import Data.IORef 
+import Data.IORef
+import qualified Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Control.Monad       (when, forM_)
-import Control.Concurrent.Chan
+-- import Control.Concurrent.Chan
 import System.Console.GetOpt (getOpt, ArgOrder(Permute), OptDescr(Option), ArgDescr(..), usageInfo)
 import System.Environment (getArgs, getEnvironment)
-import System.IO          (IOMode(..), openFile, hClose, hPutStrLn, stderr)
+import System.IO          (IOMode(..), openFile, hClose)
 import System.IO.Unsafe   (unsafePerformIO)
 import System.Directory   (doesDirectoryExist, doesFileExist, removeFile)
 import System.FilePath    ((</>),takeFileName)
 import System.Posix.Files (createNamedPipe)
 import System.Posix.Types (CMode(..))
 import System.Process     (runInteractiveCommand)
-import System.Exit        (exitSuccess, exitFailure)
+import System.Exit        (exitFailure, exitSuccess)
 
 import UI.HydraPrint (hydraPrint, defaultHydraConf)
 import qualified System.IO.Streams as S
-import System.IO.Streams.Concurrent (concurrentMerge, chanToInput, chanToOutput)
+import System.IO.Streams.Concurrent (concurrentMerge)
 
 --------------------------------------------------------------------------------
 
 -- | Extra usage docs beyond the flag info.
 usageStr :: String
 usageStr = unlines $
- [ " hydra-view: View multi-\"headed\" output. "
- , "     "
- , "     "
- , "     "
- , "     "
- , "     "
+ [ "\n Hydra-view provides multi-\"headed\" output. That is, it provides a"
+ , " way to view a dynamic collection of output streams."
+ , " "   
+ , " Hydra-view works by creating a named pipe to which file names are sent."
+ , " Each one one of those filenames is a 'stream source', usually a named-"
+ , " pipe itself.  Each such stream gets its own panel while it is producing "
+ , " output. "
+ , " "
+ , " See the command 'hydra-head' for a convenient way to connect new"
+ , " streams to an existing hydra-view session."
  ]
 
 
@@ -58,7 +63,12 @@ defaultTempDir = unsafePerformIO $ do
 data Flag =
        PipeSrc FilePath   -- | Use a user-provided file as the source of pipes.
      | SessionID FilePath -- | Use a session ID to match-up with clients.
+     | ShowHelp 
   deriving (Eq,Read,Ord,Show)
+
+isSrcFlag (PipeSrc _)   = True
+isSrcFlag (SessionID _) = True
+isSrcFlag _             = False
 
 -- | Command line options.
 cli_options :: [OptDescr Flag]
@@ -66,18 +76,22 @@ cli_options =
      [ Option ['p'] ["pipesrc"] (ReqArg PipeSrc "FILENAME")
        "Use a specific file as the source of streams."
      , Option ['s'] ["session"] (ReqArg SessionID "STRING")
-       "Use a sessionID to avoid collission with other hydra-view servers."
+       "Use a sessionID to avoid collision with other hydra-view servers."
+     , Option ['h'] ["help"]    (NoArg  ShowHelp)
+       "Show help and exit."
      ]
 
 main :: IO ()
 main = do
   cli_args <- getArgs
   let x@(options,restargs,errs) = getOpt Permute cli_options cli_args
+      showUsage = do putStrLn "USAGE: hydra-view [OPTIONS] -- commands to run"
+                     putStrLn$ usageStr
+                     putStr$ usageInfo " OPTIONS:" cli_options                     
   when (not (null errs)) $ do
     putStrLn$ "Errors parsing command line options:" 
     mapM_ (putStr . ("   "++)) errs       
-    putStrLn "\nUSAGE: hydra-view [OPTIONS] -- commands to run"
-    putStrLn$ usageStr    
+    showUsage
     exitFailure    
 
   -- let pipepath = foldl fn defaultPipeSrc options
@@ -87,7 +101,12 @@ main = do
       openPipe p = do b <- doesFileExist p
                       when b $ removeFile p
                       createNamedPipe p pipePerms
-  pipe <- case options of
+      (hlp, options') = L.partition (==ShowHelp) options
+  case hlp of
+    [] -> return () 
+    _  -> do showUsage
+             exitSuccess
+  pipe <- case options' of
            [PipeSrc file] -> return file -- Pre-existing! 
            [SessionID id] -> do let p = defaultTempDir </> "hydra-view_session_"++id++".pipe"
                                 openPipe p
