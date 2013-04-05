@@ -1,0 +1,5 @@
+
+Just run ./run.sh.
+Don't run the Makefile directly.
+
+It requires that "hydra-view" and "hydra-head" are in the PATH.
