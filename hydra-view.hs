@@ -28,7 +28,7 @@ import System.IO.Streams.Concurrent (concurrentMerge, chanToInput, chanToOutput)
 -- | Extra usage docs beyond the flag info.
 usageStr :: String
 usageStr = unlines $
- [ "     "
+ [ " hydra-view: View multi-\"headed\" output. "
  , "     "
  , "     "
  , "     "
@@ -72,9 +72,7 @@ cli_options =
 main :: IO ()
 main = do
   cli_args <- getArgs
-  print cli_args
   let x@(options,restargs,errs) = getOpt Permute cli_options cli_args
-  print x      
   when (not (null errs)) $ do
     putStrLn$ "Errors parsing command line options:" 
     mapM_ (putStr . ("   "++)) errs       
@@ -97,8 +95,6 @@ main = do
            [] -> do openPipe defaultPipeSrc
                     return defaultPipeSrc
            _ -> error$"hydra-view: too many options!  Can only set the pipe to use once: "++show options
-
-  putStrLn$ "GOT PIPE TO USE "++show pipe
 
 -- The problem is that this busy waits... better to use tail -F:
 #if 0
@@ -137,30 +133,32 @@ main = do
 
   -- Read new pipes to get bytestring streams.
   let rd pth = do
-        putStrLn$ " NEW string on pipe! "++show pth
+--        putStrLn$ " NEW string on pipe! "++show pth
         let str = B.unpack pth
-        hnd <- openFile str ReadMode              
-        -- mhnd <- safeOpenFile str ReadMode
---          case mhnd of
---            Nothing -> do putStrLn ("[hydra-view]")
-        strm <- S.handleToInputStream hnd
-        addNPoll pth (hnd,strm)
-        return (takeFileName str,strm)
+            strmName = takeFileName str
+        b <- doesFileExist str 
+        if not b then do 
+           nl <- S.nullInput
+           return (strmName, nl)
+         else do 
+           hnd <- openFile str ReadMode              
+           -- TODO: Catch error here and recover:
+           -- mhnd <- safeOpenFile str ReadMode
+   --          case mhnd of
+   --            Nothing -> do putStrLn ("[hydra-view]")
+           strm <- S.handleToInputStream hnd
+           addNPoll pth (hnd,strm)
+           return (strmName,strm)
 
   srcs <- S.mapM rd strmSrc
 
-  -- Create and endpoint to read and write to:
-  -- chan    <- newChan
-  -- chanIn  <- chanToInput  chan
---    chanOut <- chanToOutput chan
-
-  -- Open a subprocess for the command, if it exists.
   srcs' <-
     case restargs of
-      [] -> return srcs
+      [] -> do putStrLn$ " [hydra-view] No command to run; send named-pipe names to: "++show pipe
+               return srcs
       _  -> do 
                let cmd = unwords restargs
-               putStrLn$" RUNNING COMMAND "++show cmd
+               putStrLn$" [hydra-view] First output stream from command: "++show cmd
                (_stdinH, stdoutH, stderrH, pid) <- runInteractiveCommand cmd
                inS    <- S.lines =<< S.handleToInputStream stdoutH
                errS   <- S.lines =<< S.handleToInputStream stderrH
@@ -170,15 +168,4 @@ main = do
                S.appendInputStream singleton srcs
 
   hydraPrint defaultHydraConf srcs'
-  return ()
-
-  --   cli_args <- getArgs
-  -- let (options,args,errs) = getOpt Permute cli_options cli_args
-  -- unless (null errs && null args) $ do
-  --   putStrLn$ "Errors parsing command line options:" 
-  --   mapM_ (putStr . ("   "++)) errs       
-  --   putStrLn "\nUSAGE: [set ENV VARS] ./benchmark.hs [CMDLN OPTIONS]"    
-  --   putStr$ usageInfo "\n CMDLN OPTIONS:" cli_options
-  --   putStrLn$ usageStr    
-  --   exitFailure
   return ()
