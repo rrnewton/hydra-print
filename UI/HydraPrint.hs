@@ -9,10 +9,9 @@
 -- number of streams varies, the multiplexing of the terminal output does too.
 module UI.HydraPrint
        (
-         -- * Main Entrypoints
-         hydraPrint
-         -- createWindows, initialize,
-
+         -- * hydraPrint and friends
+         hydraPrint, hydraPrintStatic,
+         HydraConf(..), defaultHydraConf, DeleteWinWhen(..)
          
          -- * Types
          
@@ -39,15 +38,22 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P hiding (unzip4) 
 import Control.Monad
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Exception
 import Foreign.C.String (withCAStringLen)
+
 import qualified System.IO.Streams as S
 import System.IO.Streams (InputStream, OutputStream)
 import System.IO.Streams.Concurrent (concurrentMerge)
+
+
+#if 0 
 import UI.HSCurses.CursesHelper as CH
--- import qualified UI.HSCurses.Curses as C
--- import UI.HSCurses.Curses (wMove, defaultBorder)
 import UI.HSCurses.Curses as C hiding (s1,s3,tl,ls)
+#else
+import UI.NCurses hiding (Event)
+import qualified UI.NCurses as C
+#endif
 
 -- import Control.Monad.State
 -- import Control.Monad.Reader
@@ -73,18 +79,52 @@ import Test.Framework.TH (testGroupGenerator)
 #endif
 
 dbg :: Bool
-dbg = case P.lookup "DEBUG" theEnv of 
+dbg = case P.lookup "DEBUG_HYDRA" theEnv of 
         Nothing      -> False
         Just ""      -> False
         Just "0"     -> False
         Just "False" -> False
         Just  _      -> True
 
+theEnv :: [(String, String)]
 theEnv = unsafePerformIO$ getEnvironment
 
+io :: MonadIO m => IO a -> m a
+io x = liftIO x
+
 --------------------------------------------------------------------------------
--- Types
+-- User visible configuration
 --------------------------------------------------------------------------------
+
+data HydraConf =
+  HydraConf
+  {
+--  majorMode :: -- Interleaved, windows, or serialized.
+    deleteWhen :: DeleteWinWhen
+--  useColor ::  -- Use colors if they are supported.    
+  }
+
+-- | How long should we wait after a stream goes dry to close the window associated
+-- with it?  If 'Never' is selected, then the window will stay until a new stream
+-- causes the screen to reconfigure, or hydraPrint exits.
+data DeleteWinWhen = Never
+                   | After Seconds
+                   | Immediately
+
+type Seconds = Double
+
+-- | Like the name says, a default set of options for passing to `hydraPrint`.
+defaultHydraConf :: HydraConf
+defaultHydraConf =
+  HydraConf
+  {
+    deleteWhen = Immediately
+  }
+
+--------------------------------------------------------------------------------
+-- Internal Types
+--------------------------------------------------------------------------------
+
 
 -- | The state of an active `hydraPrint` computation.
 data MPState =
@@ -95,8 +135,11 @@ data MPState =
     finishedStrms :: [StreamHistory],
 
     -- | All active windows.  Need to be explicitly deleted.
-    windows :: [CWindow]
-    -- Log: TODO: could log stream create/delete events and their times.
+    windows :: [CWindow],
+
+    -- | All color IDs, cycle through these for new windows.
+    colorIDs :: [ColorID]
+    -- Log: TODO: could log stream create/delete events and their times.     
   }
 
 -- | All the state for a widget, that persists beyond the creation and destruction of
@@ -118,12 +161,10 @@ data WindowWidget =
     -- string is too short, and cropping it if it is too long.  The `Word` argument
     -- is a zero-based index into the writable area of the window.  Drawing off the
     -- end of the window will be ignored.
-    putLine :: ByteString -> IO (),
+    putLine :: ByteString -> Curses (),
     -- putLineN :: Word -> String -> IO ()
 
-    setWin :: CWindow -> IO (),
-    
-    destroy :: IO (),
+    setWin :: CWindow -> Curses (),
     
     -- "Private" state:    
     ----------------------------------------
@@ -151,34 +192,63 @@ data StreamHistory =
 type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
-data CWindow = CWindow C.Window WinPos 
+data CWindow = CWindow C.Window WinPos ColorID 
+  deriving Show
 
 --------------------------------------------------------------------------------
 
+-- These are all the basic colors currently exported by UI.NCurses, except black:
+-- We make sure the basic, white-on-black option is first.
+allColors :: [Color]
+--allColors = [ColorWhite, ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
+allColors = [ColorGreen, ColorCyan, ColorMagenta, ColorYellow, ColorRed, ColorBlue]
+
+-- TODO: Pair attributes with them:
+-- AttributeStandout	 
+-- AttributeUnderline	 
+-- AttributeReverse	 
+-- AttributeBlink	 
+-- AttributeDim	 
+-- AttributeBold	 
+-- AttributeAltCharset	 
+-- AttributeInvisible	 
+-- AttributeProtect
+
+-- Return a finite list of color IDs, we rotate through these.
+initColors :: Curses [ColorID]
+initColors = do
+  supports <- supportsColor
+  if supports then do 
+     cdc <- canDefineColor
+     mx  <- maxColorID
+     -- Here we make the backgrounds actually black instead of grey:
+     when cdc $ defineColor ColorBlack 0 0 0
+     ls <- mapM (\(idx, x) -> newColorID x ColorBlack idx)
+                (zip [1..mx] allColors)
+     return$ defaultColorID : ls
+   else
+     return [defaultColorID]
+
 -- | Create a new batch of NCurses windows (deleting the old ones) and display the
 -- current state of a set of stream histories.
-createWindows :: [String] -> Word -> IO ([CWindow],Word,Word)
+createWindows :: [(String,ColorID)] -> Word -> Curses ([CWindow],Word,Word)
 createWindows names num = do
-  (curY,curX) <- scrSize
+  (curY,curX) <- screenSize
   let (nX,nY)   = computeTiling num
       panelDims = applyTiling (i2w curY, i2w curX) (nY,nX)
   ws <- forM (P.zip names (NE.toList panelDims)) $ 
-   \ (name, tup@(hght,wid, posY, posX)) -> do
-    w1 <- C.newWin (w2i hght) (w2i wid) (w2i posY) (w2i posX)
-
-    (attr, pr) <- wAttrGet w1
-    let Just mg   = color "magenta"
-        Just blck = color "black"
-    initPair pr mg blck
---    wAttrSet w1 (setBold attr True, pr)
-    
-    let msg = ("CreatedWindow: "++show w1++" at "++show tup++", name "++name)   
-    when dbg $ do dbgLogLn msg
-                  wMove w1 1 2
-                  wAddStr w1 msg
-    let cwin = CWindow w1 tup  
-    drawBorder name cwin
-    wnoutRefresh w1
+   \ ((name,colorID), tup@(hght,wid, posY, posX)) -> do
+    w1 <- newWindow (w2i hght) (w2i wid) (w2i posY) (w2i posX)
+        
+    let msg = ("CreatedWindow:  at "++show tup++", name "++name)   
+    -- when dbg $ do dbgLogLn msg
+    --               moveCursor 1 2
+    --               drawString msg
+    --               drawBox Nothing Nothing
+    let cwin = CWindow w1 tup colorID
+    updateWindow w1$ do
+      setColor colorID
+      drawNamedBorder name cwin
     return cwin  
   return (ws,nX,nY)
 
@@ -186,6 +256,7 @@ createWindows names num = do
 blankChar :: Char
 blankChar = ' '
 
+{-
 -- | Use the simple method of writing blanks to clear.  Convention: overwrite the
 --   lower & right borders, but not the top/left.
 clearWindow :: CWindow -> IO ()
@@ -201,7 +272,46 @@ clearWindow (CWindow wp (hght,wid,_,_)) = do
 --    blit wp blank
   writeToCorner wp (w2i$ hght-1) (w2i borderLeft) blank 
   wnoutRefresh wp  
+-}
 
+-- Nah, this won't do it... odd that there's no clear or fill function?
+
+#if 0
+clearWindow :: CWindow -> Curses ()
+clearWindow (CWindow wp _) = do
+  updateWindow wp $ 
+    setBackground (Glyph ' ' [])
+#else
+clearWindow :: CWindow -> Curses ()
+clearWindow (CWindow wp (hght,wid,_,_) _) = updateWindow wp $ do
+  let 
+      width' = wid - borderLeft -- - borderRight
+      blank  = P.replicate (w2i width') blankChar
+  io$ evaluate hght
+  io$ evaluate wid
+  io$ evaluate wp
+  forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
+    moveCursor (w2i yind) (w2i borderLeft)
+    drawString blank
+--    drawString "!"
+    return ()
+  writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
+--  wnoutRefresh wp  
+#endif
+
+-- | Write out a string that goes all the way to the bottom/right corner.
+writeToCorner :: Int -> Int -> String -> Update ()
+writeToCorner y x str = do
+  let len = P.length str
+  moveCursor  (fromIntegral y) (fromIntegral x)
+  drawString  (P.init str)
+  -- Uh oh!  'ncurses' doesn't expose winsch either.  SKIP IT for now:  
+--  moveCursor  y (len-1)
+--  throwIfErr_ "winsch" $ winsch wp (fromIntegral$ ord$ P.last str)
+  return ()
+
+
+{-
 -- | Write out a string that goes all the way to the bottom/right corner.
 writeToCorner :: Window -> Int -> Int -> String -> IO ()
 writeToCorner wp y x str = do
@@ -249,6 +359,10 @@ redrawAll wins = do
 --    wRefresh wp     -- TODO: use wnoutrefresh instead
 --    wnoutRefresh wp 
   C.update
+-}
+redrawAll :: [CWindow] -> Curses ()
+redrawAll _ = C.render
+
 
 -- How many characters to avoid at the edges of window, for the border:
 borderTop :: Word
@@ -268,57 +382,54 @@ createWindowWidget streamName = do -- ioStrm
   winRef  <- newIORef (error "winRef field uninialized.  Call setWin.")
   let hist = StreamHistory{streamName, revHist}
       putLine bstr = do
-        cwin@(CWindow wp (y,x,_,_)) <- readIORef winRef
-        oldhist <- readIORef revHist
-        let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
-        let newhist = msg : oldhist
-        writeIORef revHist newhist    
-        let y'    = y - borderTop - borderBottom
-            shown = P.take (w2i y') newhist
-            padY  = y' - i2w(P.length shown)
-        forM_ (P.zip [1..] shown) $ \ (ind,oneline) -> do
-          wMove wp (w2i (y - borderBottom - ind - padY)) (w2i borderLeft)
-          let padded = oneline `B.append`
-                       B.replicate (w2i x - B.length oneline) ' '
-              cropped = B.take (w2i (x - borderLeft - borderRight)) padded
-          wAddStr wp (B.unpack cropped)
---          blitB wp cropped
-          ------ Line is put! ----
-          drawBorder streamName cwin
-          -- For now refresh the window on every line written..
-          wnoutRefresh wp
-        -- TODO: Do we need to refresh all the OTHER windows to avoid problems!?
---        C.update
+        cwin@(CWindow wp (y,x,_,_) _) <- io$ readIORef winRef
+        updateWindow wp $ do
+         oldhist <- io$ readIORef revHist
+         let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
+         let newhist = msg : oldhist
+         io$ writeIORef revHist newhist    
+         let y'    = y - borderTop - borderBottom
+             shown = P.take (w2i y') newhist
+             padY  = y' - i2w(P.length shown)
+         forM_ (P.zip [1..] shown) $ \ (ind,oneline) -> do
+           moveCursor (w2i (y - borderBottom - ind - padY)) (w2i borderLeft)
+           let padded = oneline `B.append`
+                        B.replicate (w2i x - B.length oneline) ' '
+               cropped = B.take (w2i (x - borderLeft - borderRight)) padded
+           drawString (B.unpack cropped)
+           ------ Line is put! ----
+           drawNamedBorder streamName cwin
         
       textSizeYX = do
-        CWindow _ (y,x,_,_) <- readIORef winRef
+        CWindow _ (y,x,_,_) _ <- readIORef winRef
         return (y,x)
-      destroy = error "implement destroy"
 
-      setWin cwin@(CWindow wp _) = do
-        writeIORef winRef cwin
-        drawBorder streamName cwin
-        wnoutRefresh wp
-        -- C.update
+      setWin cwin@(CWindow wp _ _) = do
+        io$ writeIORef winRef cwin
+        updateWindow wp $ 
+          drawNamedBorder streamName cwin
         return ()
       
       obj = WindowWidget { hist, textSizeYX, putLine,
-                           destroy, setWin, winRef }
+                           setWin, winRef }
   return obj
 
-drawBorder :: String -> CWindow -> IO ()
-drawBorder name (CWindow wp (hght,wid,y,_)) = do
-  wBorder wp defaultBorder    
+drawNamedBorder :: String -> CWindow -> Update ()
+drawNamedBorder name (CWindow wp (hght,wid,y,_) winColor) = do
+--  wBorder wp defaultBorder
+  setColor defaultColorID
+  drawBox Nothing Nothing
+  setColor winColor
   let isTop = (y == 0)
       -- name' = llCorner : name ++ [lrCorner]
       name' = "[" ++ name ++ "]"
       mid  = wid `quot` 2
-      strt = w2i mid - (P.length name' `quot` 2)
+      strt = w2i mid - (fromIntegral (P.length name' `quot` 2))
   if isTop then
-     wMove   wp 0 strt
+     moveCursor 0 strt
    else
-     wMove   wp (w2i$ hght-1) strt
-  wAddStr wp name'
+     moveCursor (w2i$ hght-1) strt
+  drawString name'
 
 dbgLn :: String -> IO ()
 dbgLn s = when dbg$ 
@@ -338,20 +449,55 @@ dbgLog = unsafePerformIO $ do
 
 --------------------------------------------------------------------------------
 
+-- | This simply takes the names of the desired initial windows, and sets things up.
+initAndRunCurses :: [String] -> (MPState -> Curses a) -> IO a
+initAndRunCurses names action = runCurses $ do
+  setCursorMode CursorInvisible
+  cids <- initColors
+  -- _ <- leaveOk True
+  wids <- forM names $ \ sname -> 
+    io$ createWindowWidget sname
+  (wins,_,_) <- createWindows (zip names cids) (i2w$ P.length names)
+  sequence$ zipWith setWin wids wins
+  action$ MPState { activeStrms= M.fromList (zip [0..] wids),
+                    finishedStrms= [],
+                    windows = wins,
+                    colorIDs= cids -- tail cids ++ [head cids]
+                  }
+
+--------------------------------------------------------------------------------
+
+
+-- | Take a fixed list of input streams.  This variant preemptively splits the screen
+-- into exactly one panel per stream.
+hydraPrintStatic :: HydraConf -> [(String, InputStream ByteString)] -> IO ()
+hydraPrintStatic _cnf [] = return ()
+hydraPrintStatic conf srcs = do
+  -- Because of how steadyStat is structured, we need to peel off the LAST stream:
+  let (nameL,strmL) = P.last srcs
+      (names,strms) = unzip (P.init srcs)
+  strms' <- sequence$ zipWith preProcess [0..] strms
+  merged <- concurrentMerge strms'
+
+  -- We set up all but the LAST stream, and then go into steady state:
+  initAndRunCurses names $ \ initMPS -> do 
+    steadyState conf{deleteWhen=Never} initMPS (i2w$ P.length names) (nameL,strmL) merged
+--  steadyState conf initSt 1 (s2name,s2) merge2
+    
+--------------------------------------------------------------------------------  
+
 -- | Takes a /source/ of input streams, which may be added dynamically.  A stream
 -- that joins dynamically, exits once it issues an end-of-stream.
---
--- For a static collection of input streams, just use `System.IO.Streams.fromList`
 --
 -- `hydraPrint` is a blocking call that doesn't return until ALL streams that
 -- appear produce an end-of-stream, AND the stream-source itself reaches
 -- end-of-stream.
-hydraPrint :: InputStream (String, InputStream ByteString) -> IO ()
-hydraPrint strmSrc = phase0 =<< S.map NewStream strmSrc
+hydraPrint :: HydraConf -> InputStream (String, InputStream ByteString) -> IO ()
+hydraPrint conf strmSrc = phase0 conf =<< S.map NewStream strmSrc
 ----------------------------------------PHASE0----------------------------------------  
 -- Nothing to do before there is at least ONE stream...   
-phase0 :: InputStream Event -> IO ()
-phase0 strmSrc' = do 
+phase0 :: HydraConf -> InputStream Event -> IO ()
+phase0 conf strmSrc' = do 
   dbgLn $ "phase0: blocking for event."
   ms1 <- S.read strmSrc'
   case ms1 of
@@ -363,13 +509,13 @@ phase0 strmSrc' = do
      s1'      <- preProcess 0 s1
      -- Next, we need a "select/epoll".  We use concurrentMerge.
      merge1 <- concurrentMerge [strmSrc', s1']
-     phase1 s1name merge1
+     phase1 conf s1name merge1
    _ -> error "hydraPrint: Internal error. Unexpected event."
 ----------------------------------------PHASE1----------------------------------------
 -- Initially, we start in "cooked" (non-ncurses) mode, and stay there as long as
 -- there is only one output stream.     
-phase1 :: String -> InputStream Event -> IO ()
-phase1 s1name merge1 = do 
+phase1 :: HydraConf -> String -> InputStream Event -> IO ()
+phase1 conf s1name merge1 = do 
   dbgLn $ "phase1: blocking for event."
   nxt <- S.read merge1
   case nxt of
@@ -378,42 +524,34 @@ phase1 s1name merge1 = do
       return ()
     Just (NewStrLine _ (StrmElt ln)) -> do
       B.putStrLn ln
-      phase1 s1name merge1
+      phase1 conf s1name merge1
     Just (NewStrLine sid EOS)          -> do 
       dbgLn $ "Got stream EOS! ID "++show sid
-      phase0 merge1
+      phase0 conf merge1
     Just (NewStream (s2name,s2))     -> do
       dbgLn $ "Got newStream! "++s2name++".  Transition to steady state..." -- (press enter)
-      -- Transition to the steady state:
-      CH.start
-      -- Some settings:
-      _ <- leaveOk True
-      _ <- cursSet CursorInvisible
-      startColor
-
-      cursesEvts <- S.makeInputStream $ fmap (Just . CursesKeyEvent) C.getCh 
-      
+      ----------------------
+      -- PROBLEM: We don't want to do a nested runCurses here...
+      -- cursesEvts <- io$ S.makeInputStream $ fmap (Just . CursesKeyEvent)
+      --                                       (C.getEvent defaultWindow Nothing)
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
-      merge2 <- concurrentMerge [merge1, cursesEvts]
-      wid0   <- createWindowWidget s1name
-      ([win0],_,_) <- createWindows [s1name] 1
-      setWin wid0 win0
-      let initSt = MPState { activeStrms= M.fromList [(0,wid0)],
-                             finishedStrms= [],
-                             windows= [win0] }
-      redrawAll [win0]
-      steadyState initSt 1 (s2name,s2) merge2
+--        merge2 <- io$ concurrentMerge [merge1, cursesEvts]
+      let merge2 = merge1
+      ---------------------- 
+      initAndRunCurses [s1name] $ \ initMPS ->
+        -- The first stream as ID 0, so this next one has ID 1:
+        steadyState conf initMPS 1 (s2name,s2) merge2        
     Just (CursesKeyEvent _) -> error "Internal error.  Shouldn't see Curses event here."
 
 ----------------------------------------PHASE3----------------------------------------
 -- Re-enter this loop every time there is a new stream.
-steadyState :: MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> IO ()
-steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do
+steadyState :: HydraConf -> MPState -> StreamID -> (String,InputStream ByteString) -> InputStream Event -> Curses ()
+steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged = do
   -- First, deal with the new stream.
-  newStrm' <- preProcess sidCnt newStrm
-  merged'  <- concurrentMerge [merged, newStrm']
-  widg     <- createWindowWidget newName
+  newStrm' <- io$ preProcess sidCnt newStrm
+  merged'  <- io$ concurrentMerge [merged, newStrm']
+  widg     <- io$ createWindowWidget newName
   let active2  = M.insert sidCnt widg activeStrms
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
@@ -422,35 +560,36 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
   
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, finishedStrms, windows} = do
-        redrawAll windows 
-        nxt <- S.read merged'
---        System.IO.hPutStrLn System.IO.stderr $ " [dbg] GOT EVENT: "++ show nxt
---        dbgPrnt $ " [dbg] GOT EVENT: "++ show nxt
+        redrawAll windows
+        nxt <- io$ S.read merged'
         case nxt of
           Nothing -> return ()
           Just (NewStrLine sid (StrmElt ln)) -> do
-            dbgLogLn (B.unpack ln)
+            io$ dbgLogLn (B.unpack ln)
             putLine (activeStrms!sid) ln
             loop mps
           Just (NewStrLine sid EOS)          -> do
-            dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
---            destroy (activeStrms!sid)
-            let active' = M.delete sid activeStrms
+            io$ dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
+            case deleteWhen conf of
+              Never -> loop mps -- Don't change *anything*..
+              After _secs -> error "hydraPrint: incomplete, does not yet support deleteWhen=After"
+              Immediately -> do 
+                let active' = M.delete sid activeStrms
 
-            -- Deleting always shifts down the LAST window (should improve this)
-            case P.reverse windows of
-              [] -> error "hydraPrint: Internal error.  Expecting list of windows to be non-empty."
-              lst:_ -> clearWindow lst
-              
-            windows' <- reCreate active' windows
-            loop mps{ activeStrms  = active',
-                      finishedStrms= hist (activeStrms!sid) : finishedStrms,
-                      windows      = windows' }
+                -- Deleting always shifts down the LAST window (should improve this)
+                case P.reverse windows of
+                  [] -> error "hydraPrint: Internal error.  Expecting list of windows to be non-empty."
+                  lst:_ -> clearWindow lst
+                windows' <- reCreate active' windows
+                loop mps{ activeStrms  = active',
+                          finishedStrms= hist (activeStrms!sid) : finishedStrms,
+                          windows      = windows' }
           Just (NewStream (s2name,s2))       -> do
---            dbgPrnt $ " [dbg] NEW stream: "++ show s2name
-            steadyState mps (sidCnt+1) (s2name,s2) merged'
+            io$ dbgPrnt $ " [dbg] NEW stream: "++ show s2name
+            steadyState conf mps (sidCnt+1) (s2name,s2) merged'
           Just (CursesKeyEvent key) -> do
             case key of
+{-              
               KeyChar 'q' -> do
                 CH.end
                 dbgLn " [dbg] NCurses finished."
@@ -464,46 +603,55 @@ steadyState state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) merged 
                windows' <- reCreate activeStrms windows
 --               redrawAll windows'
                loop mps{windows=windows'}
-              _ -> do dbgPrnt $ " [dbg] CURSES Key event: "++show key
+-}
+              _ -> do io$ dbgPrnt $ " [dbg] CURSES Key event: "++show key
                       loop mps
   loop state1
  where
    dbgPrnt s = when dbg $ do 
      dbgLogLn s
-     putLine (P.head$ M.elems activeStrms) (B.pack s)
-     redrawAll windows     
+     -- AGAIN, a problem with the Curses monad here... we want to call this before curses is initialized:
+     -- putLine (P.head$ M.elems activeStrms) (B.pack s)
+     -- redrawAll windows
+     
    reCreate active' oldWins = do
       let names = P.map (streamName . hist) $ M.elems active'
           numactive = fromIntegral (M.size active')
-      (ws,numHoriz,numVert) <- createWindows names numactive
+          withcolors = P.zip names (P.cycle (colorIDs state0))
+      (ws,numHoriz,numVert) <- createWindows withcolors numactive
       -- Guaranteed to be in ascending key order, which in our case is
       -- first-stream-to-join first.
       forM_ (P.zip ws (M.assocs active')) $ \ (win,(sid,wid)) -> do
         setWin wid win 
       -- Actually delete the old windows:
-      forM_ oldWins (\ (CWindow w _) -> delWin w)
-      dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
-               ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
+--      forM_ oldWins (\ (CWindow w _) -> delWin w)
+      forM_ oldWins (\ (CWindow w _ _) -> closeWindow w)
+      -- io$ dbgPrnt$ " [dbg] Deleted windows: "++show (P.map (\ (CWindow w _) -> w) oldWins)
+      --          ++ " created "++ show(P.map (\ (CWindow w _) -> w) ws)
       ----------------------------------------
       -- Erase the bit of border which may be unused:
-      (nLines,nCols) <- scrSize
+      (nLines,nCols) <- screenSize
       dummies <- case reverse ws of
         [] -> return []
-        (CWindow wp (hght,wid,y,x) : _) ->
+        (CWindow wp (hght,wid,y,x) _ : _) ->
           let lastCol = w2i$ x + wid - 1  in
           if (lastCol < nCols - 1) then do
             ----------- First wipe the horizontal lower border:
             let startX     = lastCol+1
-                remainingX = nCols - startX 
-            dummy <- C.newWin 1 remainingX (w2i$ y+hght-1) startX
-            -- writeToCorner dummy 0 0 (P.replicate remainingX ' ')
-            -- wnoutRefresh dummy
-            wclear dummy; wnoutRefresh dummy
+                remainingX = fromIntegral$ nCols - startX 
+            dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
+            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX) defaultColorID
+            -- wclear dummy; wnoutRefresh dummy
+            io$ dbgPrnt$ "Dummy horiz (screen "++show (nLines,nCols)++"): "++show dummyCW
+--            clearWindow dummyCW
             ----------- Then the vertical right border:
-            let startY = (w2i$ y+1)
-                remainingY = nLines - startY - 1
-            dummy2 <- C.newWin remainingY 1 startY (nCols-1)
-            wclear dummy2; wnoutRefresh dummy2
+            let startY     = (w2i$ y+1)
+                remainingY = fromIntegral$ nLines - startY - 1
+            dummy2 <- newWindow remainingY 1 startY (nCols-1)
+            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1)) defaultColorID
+            io$ dbgPrnt$ "Dummy vert: "++show dummy2CW
+            -- wclear dummy2; wnoutRefresh dummy2
+--            clearWindow dummy2CW
             return [dummy,dummy2]
            else return []
       return ws
@@ -514,7 +662,6 @@ preProcess id s = do
   s'  <- S.lines s
   s'' <- liftStream s'
   S.map (NewStrLine id) s''
-
 
 
 type StreamID = Word
@@ -594,10 +741,7 @@ test = do
   S.unRead x s1
   _ <- P.getLine
   
-  hydraPrint =<< S.fromList [("s1",s1),("s2",s2)]
-
-puts :: String -> IO ()
-puts s = drawLine (P.length s) s
+  hydraPrint defaultHydraConf =<< S.fromList [("s1",s1),("s2",s2)]
 
 --------------------------------------------------------------------------------
 -- Missing bits that should be elsewhere:
@@ -612,11 +756,11 @@ unzip4 xs = ((\(x,_,_,_) -> x) <$> xs,
 
 
 -- | Annoyingly, many libraries use Int where negative values are not allowed.
-i2w :: Int -> Word
+i2w :: (Show n, Integral n) => n -> Word
 i2w i | i < 0 = error$"i2w: Cannot convert negative Int to Word: "++show i
 i2w i = fromIntegral i
 
-w2i :: Word -> Int
+w2i :: (Show n, Integral n) => Word -> n
 w2i w = if i < 0
         then error$"w2i: Cannot convert Word to Int: "++show w
         else i
