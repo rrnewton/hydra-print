@@ -468,6 +468,11 @@ initAndRunCurses names action = runCurses $ do
 --------------------------------------------------------------------------------
 
 
+
+
+--------------------------------------------------------------------------------
+
+
 -- | Take a fixed list of input streams.  This variant preemptively splits the screen
 -- into exactly one panel per stream.
 hydraPrintStatic :: HydraConf -> [(String, InputStream ByteString)] -> IO ()
