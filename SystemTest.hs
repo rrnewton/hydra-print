@@ -18,6 +18,9 @@ import System.Environment (getArgs)
 -- baseStrmRate = 500
 -- baseStrmRate = 100 
 
+-- windowLife = 1000
+windowLife = 1500
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -41,19 +44,19 @@ main = do
   forkIO $ do 
     forM_ [1.. 3] $ \ix -> do 
       dbgLogLn "[strmsrc] Waiting before spawning additional strm..."
-      threadDelay$ 3000 * 1000
+      threadDelay$ 3000 * windowLife
       c2 <- newIORef 1
       sN <- S.makeInputStream $ do
               c <- readIORef (c2 :: IORef Int)
               threadDelay$ 1000 * baseStrmRate
               writeIORef c2 (c+1)
-              if c >= 8000 `quot` baseStrmRate
+              if c >= (8 * windowLife) `quot` baseStrmRate
                then return Nothing
                else return$ Just$ B.pack$ show ix ++":"++ show (10 * c) ++"\n" 
       dbgLogLn$"[strmsrc] Spawning additional stream! "++show ix
       writeChan strmChan (Just ("strm-"++show ix, sN))
     dbgLogLn "[strmsrc] Waiting before cutting off stream source..."
-    threadDelay$ 8 * 1000 * 1000
+    threadDelay$ 8 * 1000 * windowLife
     dbgLogLn "[strmsrc] Shutting off stream source!"
     writeChan strmChan Nothing
     dbgLogLn "[strmsrc] All done, exiting thread."
