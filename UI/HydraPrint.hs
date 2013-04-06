@@ -374,7 +374,20 @@ redrawAll wins = do
   C.update
 -}
 redrawAll :: [CWindow] -> Curses ()
-redrawAll _ = C.render
+redrawAll wins = do
+  forM_ wins $ \ cwin@(CWindow wp _ _) -> do
+    updateWindow wp $ do
+      -- HACK: This shouldn't be necessary, but I have problems with windows
+      -- appearing and then disappearing:
+      --------------------
+--      moveCursor 1 1
+--      drawString " "
+      -- drawNamedBorder "BLAH" cwin
+      drawBox Nothing Nothing
+      --------------------      
+      return ()
+    return ()
+  C.render
 
 
 -- How many characters to avoid at the edges of window, for the border:
@@ -575,7 +588,9 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
   let active2  = M.insert sidCnt widg activeStrms
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
-
+  putLine widg (B.pack "STARTING")
+  -- redraw is next, as soon as we call loop:
+  
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, dyingStrms, deadStrms, windows} = do
         redrawAll windows

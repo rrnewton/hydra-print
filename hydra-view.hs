@@ -6,19 +6,20 @@
 module Main where
 
 import Data.IORef
+import qualified Data.Set as Set
 import qualified Data.ByteString.Char8 as B
 import Control.Monad       (when, forM_)
-import Control.Concurrent  (threadDelay)
+import Control.Concurrent  (threadDelay, forkIO)
 -- import Control.Concurrent.Chan
 import System.Console.GetOpt (getOpt, ArgOrder(Permute), OptDescr(Option), ArgDescr(..), usageInfo)
 import System.Environment (getArgs, getEnvironment)
-import System.IO          (IOMode(..), openFile, hClose)
+import System.IO          (IOMode(..), openFile, hClose, hPutStrLn, stderr)
 import System.IO.Unsafe   (unsafePerformIO)
 import System.Directory   (doesDirectoryExist, doesFileExist, removeFile)
 import System.FilePath    ((</>),takeFileName)
 import System.Posix.Files (createNamedPipe)
 import System.Posix.Types (CMode(..))
-import System.Process     (runInteractiveCommand)
+import System.Process     (runInteractiveCommand, terminateProcess)
 import System.Exit        (exitFailure, exitSuccess)
 
 import UI.HydraPrint (hydraPrint, defaultHydraConf, HydraConf(..))
@@ -113,7 +114,8 @@ main = do
                     return defaultPipeSrc
            _ -> error$"hydra-view: too many options!  Can only set the pipe to use once: "++show options
 
-  (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe
+--  (_, outH, _, _pid) <- runInteractiveCommand$ tailCmd++pipe
+  (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe           
   strmSrc <- S.lines =<< S.handleToInputStream outH
 
   openHnds <- newIORef []
@@ -126,6 +128,9 @@ main = do
            b <- S.atEOF strm
            when b $ hClose hnd
         return ()
+
+  -- Store closed pipes based on their filename:
+  closedPipes <- newIORef Set.empty
   
   -- Read new pipes to get bytestring streams:
   let rd pth = do
@@ -136,7 +141,34 @@ main = do
         if not b then do 
            nl <- S.nullInput
            return (strmName, nl)
-         else do 
+         else do
+#if 1          
+           (_, strmH, _, pid) <- runInteractiveCommand$ tailCmd++str
+           strm  <- S.lines =<< S.handleToInputStream strmH
+           strm' <- S.map (`B.append` (B.pack "\n")) strm
+           -- strm' <- S.makeInputStream $ do
+           --   x <- S.read strm
+           --   case x of
+           --     Just s -> return$ Just (s `B.append` (B.pack "\n"))
+           --     Nothing -> do
+           --       set <- readIORef closedPipes
+           --       if S.member str set then
+           --         return Nothing
+           --         else 
+
+           -- Run a timer to poll if the files still exist, and close the relevant streams if
+           -- not.
+           forkIO 
+             (let loop = do
+                   threadDelay$ 200 * 1000
+                   b <- doesFileExist str
+                   when (not b) $ do
+--                     dbgPrnt$ " [dbg] Terminating process: "++show pid
+                     terminateProcess pid
+                   loop
+             in loop)
+
+#else
            hnd  <- openFile str ReadMode              
            strm <- S.handleToInputStream hnd
            addNPoll pth (hnd,strm)
@@ -157,16 +189,9 @@ main = do
                        g
                       else return Nothing
            strm' <- S.makeInputStream g 
+#endif
            return (strmName,strm')
   srcs <- S.mapM rd strmSrc
-
-  -- Run a timer to poll if the files still exist, and close the relevant streams if
-  -- not.
-  -- forkIO $ do
-  --   let loop = do
-  --         threadDelay$ 200 * 1000
-  --         loop
-  --   in loop
   
   srcs' <-
     case restargs of
@@ -179,7 +204,7 @@ main = do
                inS    <- S.lines =<< S.handleToInputStream stdoutH
                errS   <- S.lines =<< S.handleToInputStream stderrH
                merged <- concurrentMerge [inS,errS]
-               merged'   <- S.map (B.append (B.pack "\n")) merged -- Unlines it.
+               merged'   <- S.map (`B.append` (B.pack "\n")) merged -- Unlines it.
                singleton <- S.fromList [("main",merged')]
                S.appendInputStream singleton srcs
 
@@ -191,3 +216,7 @@ main = do
 
 pollFileDelay :: Int
 pollFileDelay = 200 * 1000
+
+-- tailCmd = "tail -f "
+-- tailCmd = "tail -c +0 -F "
+tailCmd = "tail -c +0 -f "
