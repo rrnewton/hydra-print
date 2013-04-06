@@ -29,6 +29,7 @@ module UI.HydraPrint
        where
 
 import Data.IORef
+import Data.Time.Clock
 import Data.Word
 import Data.Char (ord)
 import Data.Map  as M
@@ -38,6 +39,7 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P hiding (unzip4) 
 import Control.Monad
+import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Exception
 import Foreign.C.String (withCAStringLen)
@@ -79,7 +81,7 @@ import Test.Framework.TH (testGroupGenerator)
 #endif
 
 dbg :: Bool
-dbg = case P.lookup "DEBUG_HYDRA" theEnv of 
+dbg = case P.lookup "HYDRA_DEBUG" theEnv of 
         Nothing      -> False
         Just ""      -> False
         Just "0"     -> False
@@ -99,10 +101,14 @@ io x = liftIO x
 data HydraConf =
   HydraConf
   {
---  majorMode :: -- Interleaved, windows, or serialized.
+--  majorMode :: -- | Interleaved, windows, or serialized.
     deleteWhen :: DeleteWinWhen,
---  useColor ::  -- Use colors if they are supported.
-    useColor :: Bool 
+    useColor :: Bool -- | Use colors if they are supported.
+
+    -- TODO: Introduce environment variables:
+    --  HYDRA_COLOR
+    --  HYDRA_DELETEWHEN
+    --  ...
   }
 
 -- | How long should we wait after a stream goes dry to close the window associated
@@ -119,7 +125,7 @@ defaultHydraConf :: HydraConf
 defaultHydraConf =
   HydraConf
   {
-    deleteWhen = Immediately,
+    deleteWhen = After 3.0,
     useColor = True
   }
 
@@ -133,9 +139,14 @@ data MPState =
   MPState
   {
     activeStrms :: M.Map StreamID WindowWidget,
--- [(InputStream ByteString, WindowWidget)]
-    finishedStrms :: [StreamHistory],
 
+    -- | Windows whose streams have ended but are not yet removed (deleteWhen).
+    --   Each entry stores its timeout.
+    dyingStrms :: [(StreamID, Seconds, WindowWidget)],
+
+    -- | Streams that are gone and have no widget.
+    deadStrms :: [StreamHistory],
+    
     -- | All active windows.  Need to be explicitly deleted.
     windows :: [CWindow],
 
@@ -445,7 +456,7 @@ dbgLogLn s = when dbg$
   
 dbgLog :: Handle
 dbgLog = unsafePerformIO $ do
-  let file = "/tmp/hydraprint.log"
+  let file = "/tmp/hydraprint_debug.log"
   removeIfExists file
   openFile file WriteMode
 
@@ -463,7 +474,8 @@ initAndRunCurses HydraConf{useColor} names action = runCurses $ do
   (wins,_,_) <- createWindows (zip names cids) (i2w$ P.length names)
   sequence$ zipWith setWin wids wins
   action$ MPState { activeStrms= M.fromList (zip [0..] wids),
-                    finishedStrms= [],
+                    dyingStrms= [],
+                    deadStrms= [],
                     windows = wins,
                     colorIDs= cids -- tail cids ++ [head cids]
                   }
@@ -544,7 +556,8 @@ phase1 conf s1name merge1 = do
       -- Warning, because the curses events go into a concurrentMerge, they will keep
       -- being read into Haskell, irrespective of what this "main" thread does.     
 --        merge2 <- io$ concurrentMerge [merge1, cursesEvts]
-      let merge2 = merge1
+      heartbeat <- timer 200 -- 200ms heartbeat
+      merge2 <- concurrentMerge [ merge1, heartbeat ]
       ---------------------- 
       initAndRunCurses conf [s1name] $ \ initMPS ->
         -- The first stream as ID 0, so this next one has ID 1:
@@ -563,14 +576,46 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
 
-  -- TODO: Merge a heartbeat (timer) in here:
-  
   -- Second, enter an event loop:
-  let loop mps@MPState{activeStrms, finishedStrms, windows} = do
+  let loop mps@MPState{activeStrms, dyingStrms, deadStrms, windows} = do
         redrawAll windows
         nxt <- io$ S.read merged'
         case nxt of
           Nothing -> return ()
+          Just HeartBeat-> do                
+            -----------------Poll dying windows-------------------
+            let deadLp mps' [] = loop mps' -- mps{dyingStrms=remain}
+                deadLp mps' ((sid,timeOut,widg):tl) = do
+                  now <- secsToday
+                  -- io $ dbgPrnt $ "Checking dying time "++show timeOut++" against now: "++show now
+                  if now >= timeOut
+                    then do let MPState{activeStrms,dyingStrms,deadStrms} = mps'
+                            let active' = M.delete sid activeStrms
+                            windows' <- reCreate active' windows
+                            deadLp mps'{activeStrms=active',
+                                       dyingStrms= P.filter (\(a,_,_) -> a /= sid) dyingStrms,
+                                       deadStrms = hist widg : deadStrms,
+                                       windows   = windows'
+                                      }
+                                  tl
+                    else deadLp mps' tl
+                -- Call this below to actually do the poll.
+                pollAndContinue = deadLp mps dyingStrms
+
+            -------------------Poll key event-------------------
+            win <- defaultWindow                
+            let keyLoop = do 
+                 mevt <- getEvent win (Just 0)
+                 case mevt of
+                   Nothing -> pollAndContinue
+                   Just evt -> do
+                     io$ dbgPrnt$ " [dbg] Got curses event: "++show evt
+                     case evt of
+                       EventCharacter 'q' -> return ()
+                       _ -> keyLoop
+            keyLoop
+-- hWaitForInput stdin (1000)    
+          
           Just (NewStrLine sid (StrmElt ln)) -> do
             io$ dbgLogLn (B.unpack ln)
             putLine (activeStrms!sid) ln
@@ -579,7 +624,10 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
             io$ dbgPrnt $ " [dbg] Stream ID "++ show sid++" got end-of-stream "
             case deleteWhen conf of
               Never -> loop mps -- Don't change *anything*..
-              After _secs -> error "hydraPrint: incomplete, does not yet support deleteWhen=After"
+              After secs -> do
+                now <- secsToday
+                let dyingStrms' = (sid, secs + now, activeStrms!sid) : dyingStrms
+                loop mps{ dyingStrms=dyingStrms' }
               Immediately -> do 
                 let active' = M.delete sid activeStrms
 
@@ -589,7 +637,7 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
                   lst:_ -> clearWindow lst
                 windows' <- reCreate active' windows
                 loop mps{ activeStrms  = active',
-                          finishedStrms= hist (activeStrms!sid) : finishedStrms,
+                          deadStrms= hist (activeStrms!sid) : deadStrms,
                           windows      = windows' }
           Just (NewStream (s2name,s2))       -> do
             io$ dbgPrnt $ " [dbg] NEW stream: "++ show s2name
@@ -678,6 +726,7 @@ type StreamID = Word
 data Event = NewStream (String, InputStream ByteString)
            | NewStrLine {-# UNPACK #-} !StreamID (Lifted ByteString)
            | CursesKeyEvent Key
+           | HeartBeat  
 --  deriving (Show,Eq,Read,Ord)
 
 instance Show Event where
@@ -774,6 +823,20 @@ w2i w = if i < 0
   where 
   i = fromIntegral w
 
+
+timer :: Int -> IO (S.InputStream Event)
+timer milles = S.makeInputStream g
+  where
+    g = do -- putStrLn "TIMER"
+           threadDelay$ milles * 1000
+           return (Just HeartBeat)
+    
+
+secsToday :: Curses Double
+secsToday = do
+  now <- io getCurrentTime
+  return (fromRational$ toRational$ utctDayTime now)
+
 -- | io-streams do not by default support tee or fan-out, because all reads "pop".
 --   This broadcasts an InputStream to two new InputStreams, each of which will
 --   receive every element.
@@ -854,6 +917,7 @@ case_lift = do
   x <- liftStream =<< S.fromList [1..4]
   y <- S.toList x
   assertEqual "eq" [StrmElt 1,StrmElt 2,StrmElt 3,StrmElt 4,EOS] y 
+
 
 #endif
 
