@@ -3,7 +3,7 @@
 
 module Main where
 
-import UI.HydraPrint (hydraPrint, dbgLogLn)
+import UI.HydraPrint 
 import qualified System.IO.Streams as S
 import System.IO.Streams.Concurrent as CS 
 import Control.Concurrent
@@ -63,4 +63,4 @@ main = do
   ----------------------------------------
 
   strmSrc <- CS.chanToInput strmChan
-  hydraPrint strmSrc
+  hydraPrint defaultHydraConf strmSrc

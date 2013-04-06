@@ -105,7 +105,7 @@ data HydraConf =
   {
 --  majorMode :: -- | Interleaved, windows, or serialized.
     deleteWhen :: DeleteWinWhen,
-    useColor :: Bool -- | Use colors if they are supported.
+    useColor :: Bool --  Use colors if they are supported.
 
     -- TODO: Introduce environment variables:
     --  HYDRA_COLOR
@@ -311,7 +311,6 @@ clearWindow (CWindow wp (hght,wid,_,_) _) = updateWindow wp $ do
   forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
     moveCursor (w2i yind) (w2i borderLeft)
     drawString blank
---    drawString "!"
     return ()
   writeToCorner (w2i$ hght-1) (w2i borderLeft) blank 
 --  wnoutRefresh wp  
@@ -604,7 +603,10 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
   
   -- Second, enter an event loop:
   let loop mps@MPState{activeStrms, dyingStrms, deadStrms, windows} = do
-        redrawAll windows
+-- TEMP:
+--        mapM_ repaint (M.elems activeStrms)
+        redrawAll windows        
+        
         nxt <- io$ S.read merged'
         case nxt of
           Nothing -> return ()
@@ -615,8 +617,12 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
                   now <- secsToday
                   -- io $ dbgPrnt $ "Checking dying time "++show timeOut++" against now: "++show now
                   if now >= timeOut
+             -- TODO: Remove duplicate code here:                     
                     then do let MPState{activeStrms,dyingStrms,deadStrms} = mps'
                             let active' = M.delete sid activeStrms
+                            case P.reverse windows of
+                              [] -> error "hydraPrint: Internal error.  Expecting list of windows to be non-empty."
+                              lst:_ -> clearWindow lst
                             windows' <- reCreate active' windows
                             deadLp mps'{activeStrms=active',
                                        dyingStrms= P.filter (\(a,_,_) -> a /= sid) dyingStrms,
