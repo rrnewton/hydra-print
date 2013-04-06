@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                hydra-print
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            NCurses interface to view multiple ByteString streams in parallel.
 description: 
 
@@ -25,6 +25,7 @@ copyright:           2013, Ryan Newton
 category:            Concurrency
 build-type:          Simple
 cabal-version:       >=1.8
+homepage:            https://github.com/rrnewton/hydra-print
 
 extra-source-files:
      SystemTest.hs
@@ -36,9 +37,6 @@ Library
   Exposed-modules:  UI.HydraPrint
                     Scripting.Parallel.ThreadPool
   CPP-options: -DNOTESTING
-  Source-repository head
-    type:     git
-    location: https://github.com/rrnewton/hydra-print
   build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, ncurses, directory, async
 -- TEMP: I seem to need to include these even though they are used only by the EXECUTABLES:
@@ -77,3 +75,9 @@ Executable hydra-head
   build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, ncurses, directory, async, unix, 
                  filepath, process, time, random
+
+
+Source-repository head
+  type:     git
+  location: git://github.com/rrnewton/hydra-print.git
+
