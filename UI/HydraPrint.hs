@@ -179,6 +179,9 @@ data WindowWidget =
     putLine :: ByteString -> Curses (),
     -- putLineN :: Word -> String -> IO ()
 
+    -- | Just redraw it.
+    repaint :: Curses (),
+    
     setWin :: CWindow -> Curses (),
     
     -- "Private" state:    
@@ -412,12 +415,17 @@ createWindowWidget streamName = do -- ioStrm
   winRef  <- newIORef (error "winRef field uninialized.  Call setWin.")
   let hist = StreamHistory{streamName, revHist}
       putLine bstr = do
+        oldhist <- io$ readIORef revHist
+        let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
+        let newhist = msg : oldhist
+        io$ writeIORef revHist newhist
+        repaint
+
+      -- Redraw all text AND the border:
+      repaint = do
         cwin@(CWindow wp (y,x,_,_) _) <- io$ readIORef winRef
         updateWindow wp $ do
-         oldhist <- io$ readIORef revHist
-         let msg     = bstr -- `B.append` (B.pack (" <line "++show (P.length oldhist)++" y "++show y++">"))
-         let newhist = msg : oldhist
-         io$ writeIORef revHist newhist    
+         newhist <- io$ readIORef revHist
          let y'    = y - borderTop - borderBottom
              shown = P.take (w2i y') newhist
              padY  = y' - i2w(P.length shown)
@@ -429,7 +437,7 @@ createWindowWidget streamName = do -- ioStrm
            drawString (B.unpack cropped)
            ------ Line is put! ----
            drawNamedBorder cwin
-        
+  
       textSizeYX = do
         CWindow _ (y,x,_,_) _ <- readIORef winRef
         return (y,x)
@@ -441,7 +449,7 @@ createWindowWidget streamName = do -- ioStrm
         return ()
       
       obj = WindowWidget { hist, textSizeYX, putLine,
-                           setWin, winRef }
+                           setWin, winRef, repaint }
   return obj
 
 drawNamedBorder :: CWindow -> Update ()
@@ -619,20 +627,25 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
                                   tl
                     else deadLp mps' tl
                 -- Call this below to actually do the poll.
-                pollAndContinue = deadLp mps dyingStrms
+                pollAndContinue mps = deadLp mps dyingStrms
 
             -------------------Poll key event-------------------
             win <- defaultWindow                
-            let keyLoop = do 
+            let keyLoop mps = do 
                  mevt <- getEvent win (Just 0)
                  case mevt of
-                   Nothing -> pollAndContinue
+                   Nothing -> pollAndContinue mps
                    Just evt -> do
                      io$ dbgPrnt$ " [dbg] Got curses event: "++show evt
                      case evt of
+                       EventResized -> do
+                         windows' <- reCreate activeStrms windows
+--                         mapM_ repaint (M.elems activeStrms) -- Huh, this makes it crash on delete??
+--                         C.render
+                         keyLoop mps{windows=windows'}
                        EventCharacter 'q' -> return ()
-                       _ -> keyLoop
-            keyLoop
+                       _ -> keyLoop mps
+            keyLoop mps
 -- hWaitForInput stdin (1000)    
           
           Just (NewStrLine sid (StrmElt ln)) -> do
