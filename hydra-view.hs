@@ -142,19 +142,9 @@ main = do
            nl <- S.nullInput
            return (strmName, nl)
          else do
-#if 1          
            (_, strmH, _, pid) <- runInteractiveCommand$ tailCmd++str
            strm  <- S.lines =<< S.handleToInputStream strmH
            strm' <- S.map (`B.append` (B.pack "\n")) strm
-           -- strm' <- S.makeInputStream $ do
-           --   x <- S.read strm
-           --   case x of
-           --     Just s -> return$ Just (s `B.append` (B.pack "\n"))
-           --     Nothing -> do
-           --       set <- readIORef closedPipes
-           --       if S.member str set then
-           --         return Nothing
-           --         else 
 
            -- Run a timer to poll if the files still exist, and close the relevant streams if
            -- not.
@@ -167,29 +157,6 @@ main = do
                      terminateProcess pid
                    loop
              in loop)
-
-#else
-           hnd  <- openFile str ReadMode              
-           strm <- S.handleToInputStream hnd
-           addNPoll pth (hnd,strm)
-           curStrm <- newIORef strm
-           let g = do
-                 s <- readIORef curStrm
-                 x <- S.read s
-                 case x of
-                   Just _  -> return x
-                   Nothing -> do
-                     -- Reset by re-reading the file IF it still exists.
-                     threadDelay pollFileDelay
-                     b <- doesFileExist str
-                     if b then do 
-                       hnd <- openFile str ReadMode              
-                       s'  <- S.handleToInputStream hnd
-                       writeIORef curStrm s'
-                       g
-                      else return Nothing
-           strm' <- S.makeInputStream g 
-#endif
            return (strmName,strm')
   srcs <- S.mapM rd strmSrc
   
