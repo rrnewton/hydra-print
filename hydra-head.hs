@@ -24,7 +24,27 @@ import System.IO.Streams.Concurrent (concurrentMerge)
 
 --------------------------------------------------------------------------------
 
+-- | Extra usage docs beyond the flag info.
+usageStr :: String
+usageStr = unlines $
+ [ "\n Hydra-head works with 'hydra-view' to add a new stream."
+ , " "   
+ , " There are two main modes.  Hydra-head either returns immediately,"
+ , " producing the name of a pipe you can use.  Or it pipes its "   
+ , " standard input to the hydra-view session."
+ ]
+
+-- | Datatype for command line options.
+data Flag =
+       ReturnPipe         -- | Return the name of a pipe immediately.
+     | SessionID FilePath -- | Use a session ID to match-up with the view server.
+  deriving (Eq,Read,Ord,Show)
+
+
+
+theEnv :: [(String, String)]
+theEnv = unsafePerformIO getEnvironment
 
 main = do
+  return ()
 
-  

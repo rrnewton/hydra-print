@@ -8,6 +8,7 @@ module Main where
 import Data.IORef
 import qualified Data.ByteString.Char8 as B
 import Control.Monad       (when, forM_)
+import Control.Concurrent  (threadDelay)
 -- import Control.Concurrent.Chan
 import System.Console.GetOpt (getOpt, ArgOrder(Permute), OptDescr(Option), ArgDescr(..), usageInfo)
 import System.Environment (getArgs, getEnvironment)
@@ -98,9 +99,6 @@ main = do
     showUsage
     exitFailure    
 
-  -- let pipepath = foldl fn defaultPipeSrc options
-  --     fn _ (PipeSrc file) = file
-  --     fn _ (SessionID id) = defaultTempDir </> "hydra-view_session_"++id++".pipe"
   let pipePerms = CMode 0o777
       openPipe p = do b <- doesFileExist p
                       when b $ removeFile p
@@ -115,29 +113,8 @@ main = do
                     return defaultPipeSrc
            _ -> error$"hydra-view: too many options!  Can only set the pipe to use once: "++show options
 
--- The problem is that this busy waits... better to use tail -F:
-#if 0
-  -- Persistently read the pipe again and again unless the file is removed.
-  let persistent = do
-        hnd <- openFile pipe ReadMode
-        strm <- S.lines =<< S.handleToInputStream hnd
-        let loop :: IO (Maybe B.ByteString)
-            loop = do
-              x <- S.read strm
-              case x of
-                Nothing -> do
-                  putStrLn "End of file..."
-                  hClose hnd
-                  b <- doesFileExist pipe
-                  if b then persistent
-                    else return Nothing
-                Just _ -> return x
-        loop
-  strmSrc <- S.makeInputStream persistent
-#else
   (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe
   strmSrc <- S.lines =<< S.handleToInputStream outH
-#endif  
 
   openHnds <- newIORef []
   -- Lazy resource cleanup: keeps a set of open files, and collects old ones as new
@@ -149,8 +126,8 @@ main = do
            b <- S.atEOF strm
            when b $ hClose hnd
         return ()
-
-  -- Read new pipes to get bytestring streams.
+  
+  -- Read new pipes to get bytestring streams:
   let rd pth = do
 --        putStrLn$ " NEW string on pipe! "++show pth
         let str = B.unpack pth
@@ -160,17 +137,37 @@ main = do
            nl <- S.nullInput
            return (strmName, nl)
          else do 
-           hnd <- openFile str ReadMode              
-           -- TODO: Catch error here and recover:
-           -- mhnd <- safeOpenFile str ReadMode
-   --          case mhnd of
-   --            Nothing -> do putStrLn ("[hydra-view]")
+           hnd  <- openFile str ReadMode              
            strm <- S.handleToInputStream hnd
            addNPoll pth (hnd,strm)
-           return (strmName,strm)
-
+           curStrm <- newIORef strm
+           let g = do
+                 s <- readIORef curStrm
+                 x <- S.read s
+                 case x of
+                   Just _  -> return x
+                   Nothing -> do
+                     -- Reset by re-reading the file IF it still exists.
+                     threadDelay pollFileDelay
+                     b <- doesFileExist str
+                     if b then do 
+                       hnd <- openFile str ReadMode              
+                       s'  <- S.handleToInputStream hnd
+                       writeIORef curStrm s'
+                       g
+                      else return Nothing
+           strm' <- S.makeInputStream g 
+           return (strmName,strm')
   srcs <- S.mapM rd strmSrc
 
+  -- Run a timer to poll if the files still exist, and close the relevant streams if
+  -- not.
+  -- forkIO $ do
+  --   let loop = do
+  --         threadDelay$ 200 * 1000
+  --         loop
+  --   in loop
+  
   srcs' <-
     case restargs of
       [] -> do putStrLn$ " [hydra-view] No command to run; send named-pipe names to: "++show pipe
@@ -191,3 +188,6 @@ main = do
 
   hydraPrint conf srcs'
   return ()
+
+pollFileDelay :: Int
+pollFileDelay = 200 * 1000

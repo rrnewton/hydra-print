@@ -627,6 +627,10 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
               After secs -> do
                 now <- secsToday
                 let dyingStrms' = (sid, secs + now, activeStrms!sid) : dyingStrms
+                -- FIXME: don't use winRef:
+                (CWindow wp _ _) <- io$ readIORef (winRef (activeStrms!sid))
+                updateWindow wp $ return ()
+                    
                 loop mps{ dyingStrms=dyingStrms' }
               Immediately -> do 
                 let active' = M.delete sid activeStrms
