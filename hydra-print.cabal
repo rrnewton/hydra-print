@@ -7,7 +7,7 @@ synopsis:            NCurses interface to view multiple ByteString streams in pa
 description: 
 
   Output from parallel subprocesses is an ugly, many-headed beast.
-  Piping though hydra-print provides a NCurses interface to a dynamic
+  Piping though hydra-print provides an NCurses interface to a dynamic
   set output streams, displayed without interleaving.  This is a
   common problem, for example, with parallel compiles, or
   data-processing scripts.
@@ -26,6 +26,12 @@ category:            Concurrency
 build-type:          Simple
 cabal-version:       >=1.8
 
+extra-source-files:
+     SystemTest.hs
+     examples/make/Makefile
+     examples/make/run.sh
+     examples/make/README
+
 Library
   Exposed-modules:  UI.HydraPrint
                     Scripting.Parallel.ThreadPool
@@ -33,9 +39,9 @@ Library
   Source-repository head
     type:     git
     location: https://github.com/rrnewton/hydra-print
-  build-depends: base, transformers, containers, text, bytestring, io-streams,
+  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, ncurses, directory, async
--- TEMP:
+-- TEMP: I seem to need to include these even though they are used only by the EXECUTABLES:
                  , unix, process, time, random
   -- build-depends base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
   --               mtl ==2.1.*, semigroups ==0.9.*,
@@ -45,8 +51,9 @@ Test-Suite test-hydra-print
     type:       exitcode-stdio-1.0
     main-is:    TestFramework.hs
     -- DUPLICATED from above
-    build-depends: base, transformers, containers, text, bytestring, io-streams,
+    build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                    semigroups, mtl, ncurses, directory, async,
+                   unix, process, time, random,
     -- Additional dependencies:
     ---------------------------
                    QuickCheck                 ==2.5.*,
@@ -60,15 +67,13 @@ Test-Suite test-hydra-print
 Executable hydra-view
   main-is:           hydra-view.hs
   CPP-options: -DNOTESTING  
-  build-depends: base, transformers, containers, text, bytestring, io-streams,
+  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, ncurses, directory, async, unix, 
                  filepath, process, time, random
 
 Executable hydra-head
   main-is:           hydra-head.hs
   CPP-options: -DNOTESTING  
-  build-depends: base, transformers, containers, text, bytestring, io-streams,
+  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
                  semigroups, mtl, ncurses, directory, async, unix, 
                  filepath, process, time, random
-
-
