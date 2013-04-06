@@ -3,13 +3,14 @@
 
 module Main where
 
-import Data.IORef 
+import Data.IORef
+import Data.Word
 import qualified Data.ByteString.Char8 as B
 import Control.Monad       (when, forM_)
--- import Control.Concurrent.Chan
+import Control.Concurrent (threadDelay)
 import System.Console.GetOpt (getOpt, ArgOrder(Permute), OptDescr(Option), ArgDescr(..), usageInfo)
 import System.Environment (getArgs, getEnvironment)
-import System.IO          (IOMode(..), openFile, hClose)
+import System.IO          (IOMode(..), openFile, hClose, hPutStrLn)
 import System.IO.Unsafe   (unsafePerformIO)
 import System.Directory   (doesDirectoryExist, doesFileExist, removeFile)
 import System.FilePath    ((</>),takeFileName)
@@ -17,6 +18,9 @@ import System.Posix.Files (createNamedPipe)
 import System.Posix.Types (CMode(..))
 import System.Process     (runInteractiveCommand)
 import System.Exit        (exitFailure, exitSuccess)
+import System.Random
+
+import Prelude as P
 
 import UI.HydraPrint (hydraPrint, defaultHydraConf)
 import qualified System.IO.Streams as S
@@ -45,6 +49,10 @@ data Flag =
      | ShowHelp       
   deriving (Eq,Read,Ord,Show)
 
+isSessionID :: Flag -> Bool
+isSessionID (SessionID _ ) = True
+isSessionID _ = False
+
 -- | Command line options.
 cli_options :: [OptDescr Flag]
 cli_options = 
@@ -57,8 +65,33 @@ cli_options =
        "Show help and exit."
      ]
 
+--------------------------------------------------------------------------------
+-- <DUPLICATED> FIXME, factor these out:
+
 theEnv :: [(String, String)]
 theEnv = unsafePerformIO getEnvironment
+
+-- Here we make some attempt to work on Windows:
+defaultTempDir :: String
+defaultTempDir = unsafePerformIO $ do 
+  b <- doesDirectoryExist "/tmp/"
+  if b then return "/tmp/" else
+    case lookup "TEMP" theEnv of
+      Nothing -> error "hydra-view: Could not find a temporary directory to put the pipe source."
+      Just d  -> return d
+
+-- | There's a simple policy on where to put the pipes, so that other clients can
+-- find it.
+defaultPipeSrc :: String
+defaultPipeSrc = defaultTempDir ++ "hydra-view.pipe"
+
+sessionPipe :: String -> String
+sessionPipe id = 
+  defaultTempDir </> "hydra-view_session_"++id++".pipe"
+
+-- </DUPLICATED>
+--------------------------------------------------------------------------------
+
 
 main :: IO ()
 main = do
@@ -74,7 +107,41 @@ main = do
     exitFailure      
   when (ShowHelp `elem` options) $ do showUsage; exitSuccess
 
+  let pipePerms = CMode 0o777
+      openPipe p = do b <- doesFileExist p
+                      when b $ removeFile p
+                      createNamedPipe p pipePerms
 
+      getName g = do let suffix :: Word64
+                         (suffix,g') = random g
+                     let path = defaultTempDir </> "hydra-head_tmp_pipe_"++show suffix
+                     b <- doesFileExist path
+                     if b then getName g'
+                       else return path
 
+      serverPipe = case filter isSessionID options of
+                     []             -> defaultPipeSrc
+                     [SessionID id] -> sessionPipe id
+                     x  -> error "hydra-head: Multiple sessions specified: "++show x
+                     
+  stdGen <- getStdGen  
+  newPipe <- getName stdGen
+  openPipe newPipe
+
+  -- Tell the server about the new pipe:
+  hnd <- openFile serverPipe AppendMode
+  hPutStrLn hnd newPipe 
+  hClose hnd
+
+  if ReturnPipe `elem` options then 
+     putStrLn newPipe
+   else do
+    -- SO terribly hackish.  I get this error if I don't wait a bit:
+-- hydra-head.exe: /tmp/hydra-head_tmp_pipe_14447421285220617689: openFile: does not exist (Device not configured)    
+    threadDelay$ 10 * 1000
+    outH <- openFile newPipe AppendMode
+    out <- S.handleToOutputStream outH
+    S.connect S.stdin out
+    hClose outH
+    removeFile newPipe
   return ()
-

@@ -462,12 +462,12 @@ drawNamedBorder (CWindow wp (hght,wid,y,_) (name,winColor)) = do
       -- name' = llCorner : name ++ [lrCorner]
       name' = "[" ++ name ++ "]"
       mid  = wid `quot` 2
-      strt = w2i mid - (fromIntegral (P.length name' `quot` 2))
+      strt = max 0 (w2i mid - (fromIntegral (P.length name' `quot` 2)))
   if isTop then
      moveCursor 0 strt
    else
      moveCursor (w2i$ hght-1) strt
-  drawString name'
+  drawString (take (w2i wid) name')
 
 dbgLn :: String -> IO ()
 dbgLn s = when dbg$ 
@@ -600,7 +600,6 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
   let active2  = M.insert sidCnt widg activeStrms
   windows2 <- reCreate active2 windows
   let state1 = state0{activeStrms=active2, windows=windows2}
-  putLine widg (B.pack "STARTING")
   -- redraw is next, as soon as we call loop:
   
   -- Second, enter an event loop:
@@ -644,7 +643,10 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
 --                         C.render
                          keyLoop mps{windows=windows'}
                        EventCharacter 'q' -> return ()
-                       _ -> keyLoop mps
+                       _ -> do
+--                         mapM_ repaint (M.elems activeStrms)
+--                         C.render
+                         keyLoop mps
             keyLoop mps
 -- hWaitForInput stdin (1000)    
           

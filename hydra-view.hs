@@ -61,6 +61,10 @@ defaultTempDir = unsafePerformIO $ do
       Nothing -> error "hydra-view: Could not find a temporary directory to put the pipe source."
       Just d  -> return d
 
+sessionPipe :: String -> String
+sessionPipe id = 
+  defaultTempDir </> "hydra-view_session_"++id++".pipe"
+
 -- | Datatype for command line options.
 data Flag =
        PipeSrc FilePath   -- | Use a user-provided file as the source of pipes.
@@ -107,7 +111,7 @@ main = do
   when (ShowHelp `elem` options) $ do showUsage; exitSuccess
   pipe <- case filter isSrcFlag options of
            [PipeSrc file] -> return file -- Pre-existing! 
-           [SessionID id] -> do let p = defaultTempDir </> "hydra-view_session_"++id++".pipe"
+           [SessionID id] -> do let p = sessionPipe id
                                 openPipe p
                                 return p
            [] -> do openPipe defaultPipeSrc
