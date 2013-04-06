@@ -90,7 +90,7 @@ cli_options =
 main :: IO ()
 main = do
   cli_args <- getArgs
-  let x@(options,restargs,errs) = getOpt Permute cli_options cli_args
+  let (options,restargs,errs) = getOpt Permute cli_options cli_args
       showUsage = do putStrLn "USAGE: hydra-view [OPTIONS] -- commands to run"
                      putStrLn$ usageStr
                      putStr$ usageInfo " OPTIONS:" cli_options                     
