@@ -635,13 +635,15 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
                  case mevt of
                    Nothing -> do when hit $ do
                                    mapM_ repaint (M.elems activeStrms)
+                                   return ()
                                  pollAndContinue mps
                    Just evt -> do
                      io$ dbgPrnt$ " [dbg] Got curses event: "++show evt
                      case evt of
                        EventResized -> do
-                         windows' <- reCreate activeStrms windows
-                         keyLoop hit mps{windows=windows'}
+--                         windows' <- reCreate activeStrms windows
+--                         keyLoop hit mps{windows=windows'}
+                         keyLoop hit mps
                        EventCharacter 'q' -> return ()
                        _ -> do
 --                         mapM_ repaint (M.elems activeStrms)
