@@ -630,24 +630,24 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
 
             -------------------Poll key event-------------------
             win <- defaultWindow                
-            let keyLoop mps = do 
+            let keyLoop hit mps = do 
                  mevt <- getEvent win (Just 0)
                  case mevt of
-                   Nothing -> pollAndContinue mps
+                   Nothing -> do when hit $ do
+                                   mapM_ repaint (M.elems activeStrms)
+                                 pollAndContinue mps
                    Just evt -> do
                      io$ dbgPrnt$ " [dbg] Got curses event: "++show evt
                      case evt of
                        EventResized -> do
                          windows' <- reCreate activeStrms windows
---                         mapM_ repaint (M.elems activeStrms) -- Huh, this makes it crash on delete??
---                         C.render
-                         keyLoop mps{windows=windows'}
+                         keyLoop hit mps{windows=windows'}
                        EventCharacter 'q' -> return ()
                        _ -> do
 --                         mapM_ repaint (M.elems activeStrms)
 --                         C.render
-                         keyLoop mps
-            keyLoop mps
+                         keyLoop True mps
+            keyLoop False mps
 -- hWaitForInput stdin (1000)    
           
           Just (NewStrLine sid (StrmElt ln)) -> do
