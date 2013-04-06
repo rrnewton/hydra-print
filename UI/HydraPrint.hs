@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings, NamedFieldPuns #-}
 {-# LANGUAGE CPP #-}
 
+#define UPDATE_ALL_ALWAYS
+
 #ifndef NOTESTING
 {-# LANGUAGE TemplateHaskell #-}
 #endif
@@ -205,7 +207,7 @@ data StreamHistory =
 type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
-data CWindow = CWindow C.Window WinPos ColorID 
+data CWindow = CWindow C.Window WinPos (String,ColorID)
   deriving Show
 
 --------------------------------------------------------------------------------
@@ -258,10 +260,10 @@ createWindows names num = do
     --               moveCursor 1 2
     --               drawString msg
     --               drawBox Nothing Nothing
-    let cwin = CWindow w1 tup colorID
-    updateWindow w1$ do
-      setColor colorID
-      drawNamedBorder name cwin
+    let cwin = CWindow w1 tup (name,colorID)
+#ifndef UPDATE_ALL_ALWAYS
+    updateWindow w1$ drawNamedBorder cwin
+#endif      
     return cwin  
   return (ws,nX,nY)
 
@@ -376,16 +378,18 @@ redrawAll wins = do
 redrawAll :: [CWindow] -> Curses ()
 redrawAll wins = do
   forM_ wins $ \ cwin@(CWindow wp _ _) -> do
+#ifdef UPDATE_ALL_ALWAYS    
     updateWindow wp $ do
       -- HACK: This shouldn't be necessary, but I have problems with windows
       -- appearing and then disappearing:
       --------------------
 --      moveCursor 1 1
 --      drawString " "
-      -- drawNamedBorder "BLAH" cwin
-      drawBox Nothing Nothing
+      drawNamedBorder cwin
+      -- drawBox Nothing Nothing
       --------------------      
       return ()
+#endif      
     return ()
   C.render
 
@@ -424,7 +428,7 @@ createWindowWidget streamName = do -- ioStrm
                cropped = B.take (w2i (x - borderLeft - borderRight)) padded
            drawString (B.unpack cropped)
            ------ Line is put! ----
-           drawNamedBorder streamName cwin
+           drawNamedBorder cwin
         
       textSizeYX = do
         CWindow _ (y,x,_,_) _ <- readIORef winRef
@@ -433,15 +437,15 @@ createWindowWidget streamName = do -- ioStrm
       setWin cwin@(CWindow wp _ _) = do
         io$ writeIORef winRef cwin
         updateWindow wp $ 
-          drawNamedBorder streamName cwin
+          drawNamedBorder cwin
         return ()
       
       obj = WindowWidget { hist, textSizeYX, putLine,
                            setWin, winRef }
   return obj
 
-drawNamedBorder :: String -> CWindow -> Update ()
-drawNamedBorder name (CWindow wp (hght,wid,y,_) winColor) = do
+drawNamedBorder :: CWindow -> Update ()
+drawNamedBorder (CWindow wp (hght,wid,y,_) (name,winColor)) = do
 --  wBorder wp defaultBorder
   setColor defaultColorID
   drawBox Nothing Nothing
@@ -714,7 +718,7 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
             let startX     = lastCol+1
                 remainingX = fromIntegral$ nCols - startX 
             dummy <- newWindow 1 remainingX (w2i$ y+hght-1) startX
-            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX) defaultColorID
+            let dummyCW = CWindow dummy (1, i2w remainingX, (w2i$ y+hght-1), i2w startX) ("",defaultColorID)
             -- wclear dummy; wnoutRefresh dummy
             io$ dbgPrnt$ "Dummy horiz (screen "++show (nLines,nCols)++"): "++show dummyCW
 --            clearWindow dummyCW
@@ -722,7 +726,7 @@ steadyState conf state0@MPState{activeStrms,windows} sidCnt (newName,newStrm) me
             let startY     = (w2i$ y+1)
                 remainingY = fromIntegral$ nLines - startY - 1
             dummy2 <- newWindow remainingY 1 startY (nCols-1)
-            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1)) defaultColorID
+            let dummy2CW = CWindow dummy2 (i2w remainingY, 1, i2w startY, i2w (nCols-1)) ("",defaultColorID)
             io$ dbgPrnt$ "Dummy vert: "++show dummy2CW
             -- wclear dummy2; wnoutRefresh dummy2
 --            clearWindow dummy2CW
