@@ -39,7 +39,7 @@ import Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
-import Prelude as P hiding (unzip4) 
+import Prelude as P hiding (catch) 
 import Control.Monad
 import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO, MonadIO)
@@ -92,6 +92,9 @@ dbg = case P.lookup "HYDRA_DEBUG" theEnv of
 
 theEnv :: [(String, String)]
 theEnv = unsafePerformIO$ getEnvironment
+
+instance (MonadIO Update) where
+  liftIO = io
 
 io :: MonadIO m => IO a -> m a
 io x = liftIO x
@@ -211,8 +214,9 @@ type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
 data CWindow = CWindow C.Window WinPos (String,ColorID)
-  deriving Show
 
+instance Show CWindow where
+  show (CWindow _ wp p) = show "C.Window " ++ show wp ++ " " ++ show p
 --------------------------------------------------------------------------------
 
 -- These are all the basic colors currently exported by UI.NCurses, except black:
