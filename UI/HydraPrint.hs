@@ -213,6 +213,9 @@ type WinPos = (Word,Word,Word,Word)
 data CWindow = CWindow C.Window WinPos (String,ColorID)
 --  deriving Show
 
+instance Show CWindow where
+  show (CWindow _ winpos _) = "<Window at "++show winpos++">"
+
 --------------------------------------------------------------------------------
 
 -- These are all the basic colors currently exported by UI.NCurses, except black:

@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                hydra-print
-version:             0.1.0.1
+version:             0.1.0.2
 synopsis:            NCurses interface to view multiple ByteString streams in parallel.
 description: 
 
