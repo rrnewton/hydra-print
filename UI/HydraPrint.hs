@@ -39,7 +39,7 @@ import Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
-import Prelude as P hiding (unzip4) 
+import Prelude as P 
 import Control.Monad
 import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO, MonadIO)
@@ -211,7 +211,7 @@ type WinPos = (Word,Word,Word,Word)
 
 -- | Along with the raw pointer, remember the size at which a window was created:
 data CWindow = CWindow C.Window WinPos (String,ColorID)
-  deriving Show
+--  deriving Show
 
 --------------------------------------------------------------------------------
 
