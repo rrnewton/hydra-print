@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                hydra-print
-version:             0.1.0.2
+version:             0.1.0.3
 synopsis:            NCurses interface to view multiple ByteString streams in parallel.
 description: 
 
@@ -37,8 +37,8 @@ Library
   Exposed-modules:  UI.HydraPrint
                     Scripting.Parallel.ThreadPool
   CPP-options: -DNOTESTING
-  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
-                 semigroups, mtl, ncurses, directory, async
+  build-depends: base >= 4.5 && <= 4.7, transformers, containers, text, bytestring, io-streams,
+                 semigroups, mtl, ncurses >= 0.2.3, directory, async
 -- TEMP: I seem to need to include these even though they are used only by the EXECUTABLES:
                  , unix, process, time, random
   -- build-depends base ==4.6.*, transformers ==0.3.*, containers ==0.5.*, text ==0.11.*, 
@@ -49,8 +49,8 @@ Test-Suite unittest-hydra-print
     type:       exitcode-stdio-1.0
     main-is:    TestFramework.hs
     -- DUPLICATED from above
-    build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
-                   semigroups, mtl, ncurses, directory, async,
+    build-depends: base >= 4.5 && <= 4.7, transformers, containers, text, bytestring, io-streams,
+                   semigroups, mtl, ncurses >= 0.2.3, directory, async,
                    unix, process, time, random,
     -- Additional dependencies:
     ---------------------------
@@ -69,22 +69,22 @@ Executable systemtest-hydra-print
     main-is:    SystemTest.hs
     CPP-options: -DNOTESTING      
     -- DUPLICATED from above
-    build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
-                   semigroups, mtl, ncurses, directory, async,
+    build-depends: base >= 4.5 && <= 4.7, transformers, containers, text, bytestring, io-streams,
+                   semigroups, mtl, ncurses >= 0.2.3, directory, async,
                    unix, process, time, random
 
 Executable hydra-view
   main-is:           hydra-view.hs
   CPP-options: -DNOTESTING  
-  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
-                 semigroups, mtl, ncurses, directory, async, unix, 
+  build-depends: base >= 4.5 && <= 4.7, transformers, containers, text, bytestring, io-streams,
+                 semigroups, mtl, ncurses >= 0.2.3, directory, async, unix, 
                  filepath, process, time, random
 
 Executable hydra-head
   main-is:           hydra-head.hs
   CPP-options: -DNOTESTING  
-  build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
-                 semigroups, mtl, ncurses, directory, async, unix, 
+  build-depends: base >= 4.5 && <= 4.7, transformers, containers, text, bytestring, io-streams,
+                 semigroups, mtl, ncurses >= 0.2.3, directory, async, unix, 
                  filepath, process, time, random
 
 

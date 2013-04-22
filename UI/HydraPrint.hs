@@ -308,9 +308,9 @@ clearWindow (CWindow wp (hght,wid,_,_) _) = updateWindow wp $ do
   let 
       width' = wid - borderLeft -- - borderRight
       blank  = P.replicate (w2i width') blankChar
-  io$ E.evaluate hght
-  io$ E.evaluate wid
-  io$ E.evaluate wp
+  -- io$ E.evaluate hght
+  -- io$ E.evaluate wid
+  -- io$ E.evaluate wp
   forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
     moveCursor (w2i yind) (w2i borderLeft)
     drawString blank
@@ -424,10 +424,11 @@ createWindowWidget streamName = do -- ioStrm
         repaint
 
       -- Redraw all text AND the border:
+      repaint :: Curses ()  
       repaint = do
         cwin@(CWindow wp (y,x,_,_) _) <- io$ readIORef winRef
+        newhist <- io$ readIORef revHist
         updateWindow wp $ do
-         newhist <- io$ readIORef revHist
          let y'    = y - borderTop - borderBottom
              shown = P.take (w2i y') newhist
              padY  = y' - i2w(P.length shown)
