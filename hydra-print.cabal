@@ -45,7 +45,7 @@ Library
   --               mtl ==2.1.*, semigroups ==0.9.*,
   --               bytestring ==0.10.*, io-streams ==1.0.*, hscurses ==1.4.*
 
-Test-Suite test-hydra-print
+Test-Suite unittest-hydra-print
     type:       exitcode-stdio-1.0
     main-is:    TestFramework.hs
     -- DUPLICATED from above
@@ -61,6 +61,17 @@ Test-Suite test-hydra-print
                    test-framework-quickcheck2 ==0.3.*,
                    test-framework-th          ==0.2.*
 
+-- Test-Suite systemtest-hydra-print
+-- This needs a proper terminal to run, so we leave it to the user, rather than
+-- running it as a cabal test suite.
+Executable systemtest-hydra-print
+    type:       exitcode-stdio-1.0
+    main-is:    SystemTest.hs
+    CPP-options: -DNOTESTING      
+    -- DUPLICATED from above
+    build-depends: base <= 4.7, transformers, containers, text, bytestring, io-streams,
+                   semigroups, mtl, ncurses, directory, async,
+                   unix, process, time, random
 
 Executable hydra-view
   main-is:           hydra-view.hs

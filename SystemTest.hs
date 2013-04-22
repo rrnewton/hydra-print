@@ -1,5 +1,7 @@
 {-# LANGUAGE CPP #-}
--- This isn't a unit test.
+
+-- | Simple system test of hydra print.  Creates a main stream, and then adds three
+--   child streams dynamically, which all expire before the main stream does.
 
 module Main where
 
@@ -14,27 +16,28 @@ import Data.IORef
 import Prelude as P
 import System.Environment (getArgs)
 
---baseStrmRate = 1000 -- Seconds
--- baseStrmRate = 500
--- baseStrmRate = 100 
-
--- windowLife = 1000
-windowLife = 1500
 
 main :: IO ()
 main = do
   args <- getArgs
+  -- Milliseconds:
   let baseStrmRate =
         case args of
           [b] -> read b
           _   -> 100
+          
+      -- A scaling parameter for how long the windows stay open:
+      windowLife = 500 -- 1000
+      -- windowLife = 1500
   
   c1 <- newIORef 1
   s1 <- S.makeInputStream $ do
           c <- readIORef (c1 :: IORef Int)
           threadDelay$ 2000 * baseStrmRate
           writeIORef c1 (c+1)
-          return$ Just$ B.pack$ show (100 * c) ++"\n"
+          if c >= (20 * windowLife) `quot` baseStrmRate
+           then return Nothing  
+           else return$ Just$ B.pack$ show (100 * c) ++"\n"          
    
   strmChan <- newChan
   writeChan strmChan (Just ("Strm-0",s1))
