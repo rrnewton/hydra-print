@@ -39,11 +39,11 @@ import Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
-import Prelude as P 
+import Prelude as P
 import Control.Monad
 import Control.Concurrent (threadDelay)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Exception
+import qualified Control.Exception as E
 import Foreign.C.String (withCAStringLen)
 
 import qualified System.IO.Streams as S
@@ -308,9 +308,9 @@ clearWindow (CWindow wp (hght,wid,_,_) _) = updateWindow wp $ do
   let 
       width' = wid - borderLeft -- - borderRight
       blank  = P.replicate (w2i width') blankChar
-  io$ evaluate hght
-  io$ evaluate wid
-  io$ evaluate wp
+  io$ E.evaluate hght
+  io$ E.evaluate wid
+  io$ E.evaluate wp
   forM_ [borderTop .. hght - borderBottom - 1 ] $ \ yind -> do
     moveCursor (w2i yind) (w2i borderLeft)
     drawString blank
@@ -971,7 +971,7 @@ case_lift = do
 #endif
 
 removeIfExists :: FilePath -> IO ()
-removeIfExists fileName = removeFile fileName `catch` handleExists
+removeIfExists fileName = removeFile fileName `E.catch` handleExists
   where handleExists e
           | isDoesNotExistError e = return ()
-          | otherwise = throwIO e
+          | otherwise = E.throwIO e
