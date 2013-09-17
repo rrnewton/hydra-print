@@ -13,6 +13,7 @@ module UI.HydraPrint
        (
          -- * hydraPrint and friends
          hydraPrint, hydraPrintStatic,
+         hydraPrintInterleaved,
          HydraConf(..), defaultHydraConf, DeleteWinWhen(..)
          
          -- * Types
@@ -41,14 +42,15 @@ import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Prelude as P
 import Control.Monad
-import Control.Concurrent (threadDelay)
+import Control.Concurrent.Chan
+import Control.Concurrent (threadDelay, forkIO)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Control.Exception as E
 import Foreign.C.String (withCAStringLen)
 
 import qualified System.IO.Streams as S
 import System.IO.Streams (InputStream, OutputStream)
-import System.IO.Streams.Concurrent (concurrentMerge)
+import System.IO.Streams.Concurrent (concurrentMerge, chanToInput, chanToOutput)
 
 
 #if 0 
@@ -510,7 +512,28 @@ initAndRunCurses HydraConf{useColor} names action = runCurses $ do
 
 --------------------------------------------------------------------------------
 
-
+-- | A simple and robust alternative that simply interleaves the lines distinguishing
+--   them based on prefix, color, or both.  
+hydraPrintInterleaved :: InputStream (String, InputStream ByteString) -> IO ()
+hydraPrintInterleaved srcs = do
+  nexus <- newChan
+  outStrm <- chanToOutput nexus
+  let adder = do
+        x <- S.read srcs
+        case x of
+          Nothing   -> writeChan nexus Nothing
+          Just (name,src) -> do 
+            src' <- S.map (\x -> B.concat ["[", B.pack name, "] ",x]) src
+            -- writeChan nexus (Just src')
+            _ <- forkIO $ S.supply src' outStrm
+            adder
+      reader = do
+        x <- readChan nexus
+        case x of
+          Nothing -> return ()
+          Just s  -> B.putStrLn s
+  reader
+  
 
 
 --------------------------------------------------------------------------------
