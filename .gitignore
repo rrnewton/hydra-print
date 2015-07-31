@@ -1,0 +1,14 @@
+a.out
+*.hi
+*~
+\#*\#
+.#*
+*.o
+*.log
+.cabal-sandbox
+.stack-work
+cabal.sandbox.config
+dist
+not_tracked
+
+.DS_Store
