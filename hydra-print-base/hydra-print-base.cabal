@@ -32,6 +32,7 @@ homepage:            https://github.com/rrnewton/hydra-print
 Library
   Exposed-modules:  UI.HydraPrint
                     Scripting.Parallel.ThreadPool
+  hs-source-dirs: ./src
   CPP-options: -DNOTESTING
   build-depends: base >= 4.5,
                  transformers, containers, text, bytestring, io-streams,
@@ -48,20 +49,16 @@ Source-repository head
 
 Test-Suite unittest-hydra-print
     type:       exitcode-stdio-1.0
-    main-is:    TestFramework.hs
-    -- DUPLICATED from above
+    hs-source-dirs: ./test
+    main-is:    Main.hs
     build-depends: base >= 4.5,
-                   transformers, containers, text, bytestring, io-streams,
-                   semigroups, mtl, ncurses >= 0.2.3, directory, async,
-                   unix, process, time, random,
-    -- Additional dependencies:
-    ---------------------------
-                   QuickCheck                 ==2.5.*,
-                   HUnit                      ==1.2.*,
-                   test-framework             ==0.8.*,
-                   test-framework-hunit       ==0.3.*,
-                   test-framework-quickcheck2 ==0.3.*,
-                   test-framework-th          ==0.2.*
+                   hydra-print-base,
+                   QuickCheck                 >=2.5,
+                   HUnit                      >=1.2,
+                   test-framework             >=0.8,
+                   test-framework-hunit       >=0.3,
+                   test-framework-quickcheck2 >=0.3,
+                   test-framework-th          >=0.2
 
 -- -- Test-Suite systemtest-hydra-print
 -- --    type:       exitcode-stdio-1.0
