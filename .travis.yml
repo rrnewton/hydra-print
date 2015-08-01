@@ -14,7 +14,7 @@ before_install:
 
 install:
   - stack setup --no-terminal +RTS -N1 -RTS
-  - stack build --only-snapshot --no-terminal +RTS -N1 -RTS
+  - stack test --only-snapshot --no-terminal +RTS -N1 -RTS
 
 script:
   - stack test --no-terminal +RTS -N1 -RTS
