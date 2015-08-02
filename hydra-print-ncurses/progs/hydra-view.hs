@@ -22,7 +22,9 @@ import System.Posix.Types (CMode(..))
 import System.Process     (runInteractiveCommand, terminateProcess)
 import System.Exit        (exitFailure, exitSuccess)
 
-import UI.HydraPrint (hydraPrint, defaultHydraConf, HydraConf(..))
+import UI.HydraPrint ()
+import UI.HydraPrint.NCurses (hydraPrint, defaultHydraConf, HydraConf(..))
+
 import qualified System.IO.Streams as S
 import System.IO.Streams.Concurrent (concurrentMerge)
 
@@ -33,7 +35,7 @@ usageStr :: String
 usageStr = unlines $
  [ "\n Hydra-view provides multi-\"headed\" output. That is, it provides a"
  , " way to view a dynamic collection of output streams."
- , " "   
+ , " "
  , " Hydra-view works by creating a named pipe to which file names are sent."
  , " Each one one of those filenames is a 'stream source', usually a named-"
  , " pipe itself.  Each such stream gets its own panel while it is producing "
@@ -54,7 +56,7 @@ defaultPipeSrc = defaultTempDir ++ "hydra-view.pipe"
 
 -- Here we make some attempt to work on Windows:
 defaultTempDir :: String
-defaultTempDir = unsafePerformIO $ do 
+defaultTempDir = unsafePerformIO $ do
   b <- doesDirectoryExist "/tmp/"
   if b then return "/tmp/" else
     case lookup "TEMP" theEnv of
@@ -62,7 +64,7 @@ defaultTempDir = unsafePerformIO $ do
       Just d  -> return d
 
 sessionPipe :: String -> String
-sessionPipe id = 
+sessionPipe id =
   defaultTempDir </> "hydra-view_session_"++id++".pipe"
 
 -- | Datatype for command line options.
@@ -80,7 +82,7 @@ isSrcFlag _             = False
 
 -- | Command line options.
 cli_options :: [OptDescr Flag]
-cli_options = 
+cli_options =
      [ Option ['p'] ["pipesrc"] (ReqArg PipeSrc "FILENAME")
        "Use a specific file as the source of streams."
      , Option ['s'] ["session"] (ReqArg SessionID "STRING")
@@ -97,12 +99,12 @@ main = do
   let (options,restargs,errs) = getOpt Permute cli_options cli_args
       showUsage = do putStrLn "USAGE: hydra-view [OPTIONS] -- commands to run"
                      putStrLn$ usageStr
-                     putStr$ usageInfo " OPTIONS:" cli_options                     
+                     putStr$ usageInfo " OPTIONS:" cli_options
   when (not (null errs)) $ do
-    putStrLn$ "Errors parsing command line options:" 
-    mapM_ (putStr . ("   "++)) errs       
+    putStrLn$ "Errors parsing command line options:"
+    mapM_ (putStr . ("   "++)) errs
     showUsage
-    exitFailure    
+    exitFailure
 
   let pipePerms = CMode 0o777
       openPipe p = do b <- doesFileExist p
@@ -110,7 +112,7 @@ main = do
                       createNamedPipe p pipePerms
   when (ShowHelp `elem` options) $ do showUsage; exitSuccess
   pipe <- case filter isSrcFlag options of
-           [PipeSrc file] -> return file -- Pre-existing! 
+           [PipeSrc file] -> return file -- Pre-existing!
            [SessionID id] -> do let p = sessionPipe id
                                 openPipe p
                                 return p
@@ -119,13 +121,13 @@ main = do
            _ -> error$"hydra-view: too many options!  Can only set the pipe to use once: "++show options
 
 --  (_, outH, _, _pid) <- runInteractiveCommand$ tailCmd++pipe
-  (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe           
+  (_, outH, _, _pid) <- runInteractiveCommand$ "tail -f "++pipe
   strmSrc <- S.lines =<< S.handleToInputStream outH
 
   openHnds <- newIORef []
   -- Lazy resource cleanup: keeps a set of open files, and collects old ones as new
   -- ones are added:
-  let addNPoll newpth pr = do 
+  let addNPoll newpth pr = do
         open <- atomicModifyIORef openHnds
                  (\ls -> let new = (newpth,pr) : ls in (new,new))
         forM_ open $ \ (_pth,(hnd,strm)) -> do
@@ -135,14 +137,14 @@ main = do
 
   -- Store closed pipes based on their filename:
   closedPipes <- newIORef Set.empty
-  
+
   -- Read new pipes to get bytestring streams:
   let rd pth = do
 --        putStrLn$ " NEW string on pipe! "++show pth
         let str = B.unpack pth
             strmName = takeFileName str
-        b <- doesFileExist str 
-        if not b then do 
+        b <- doesFileExist str
+        if not b then do
            nl <- S.nullInput
            return (strmName, nl)
          else do
@@ -152,7 +154,7 @@ main = do
 
            -- Run a timer to poll if the files still exist, and close the relevant streams if
            -- not.
-           forkIO 
+           forkIO
              (let loop = do
                    threadDelay$ 200 * 1000
                    b <- doesFileExist str
@@ -163,12 +165,12 @@ main = do
              in loop)
            return (strmName,strm')
   srcs <- S.mapM rd strmSrc
-  
+
   srcs' <-
     case restargs of
       [] -> do putStrLn$ " [hydra-view] No command to run; send named-pipe names to: "++show pipe
                return srcs
-      _  -> do 
+      _  -> do
                let cmd = unwords restargs
                putStrLn$" [hydra-view] First output stream from command: "++show cmd
                (_stdinH, stdoutH, stderrH, _pid) <- runInteractiveCommand cmd

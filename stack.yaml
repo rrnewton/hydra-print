@@ -1,7 +1,7 @@
 flags: {}
 packages:
  - hydra-print-base/
-# - hydra-print-ncurses/
+ - hydra-print-ncurses/
 # - hydra-print-ansi/
 
 extra-deps:
