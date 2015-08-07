@@ -9,5 +9,6 @@ extra-deps:
  - ncurses-0.2.11
 resolver: lts-2.20
 
-docker:
-  enable: true
+# Don't turn this on.  It will break travis:
+# docker:
+#   enable: true
